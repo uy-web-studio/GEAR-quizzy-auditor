@@ -1,0 +1,47 @@
+# Cloud Build configuration for Quizzy Auditor
+
+steps:
+  # Step 1: Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/quizzy-auditor:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/quizzy-auditor:latest'
+      - '.'
+
+  # Step 2: Push the images to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-commit'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/quizzy-auditor:$COMMIT_SHA'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-latest'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/quizzy-auditor:latest'
+
+  # Step 3: Deploy via gcloud run deploy
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'deploy'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'quizzy-auditor'
+      - '--image=gcr.io/$PROJECT_ID/quizzy-auditor:$COMMIT_SHA'
+      - '--platform=managed'
+      - '--region=us-central1'
+      - '--allow-unauthenticated'
+      - '--set-env-vars=GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=global,GOOGLE_GENAI_USE_ENTERPRISE=1'
+
+images:
+  - 'gcr.io/$PROJECT_ID/quizzy-auditor:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/quizzy-auditor:latest'
+
+options:
+  machineType: 'N1_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY

@@ -2,6 +2,7 @@ from google.adk.agents import LlmAgent, SequentialAgent
 from google.adk.tools import google_search
 
 from .fetcher import FetcherAgent
+from .reporter import ReporterAgent
 from .schemas import QuestionAudit
 
 # Rubric ported from the pre-existing `news-quiz-qc` skill, per SPEC.md §5 —
@@ -49,9 +50,8 @@ auditor_agent = LlmAgent(
 root_agent = SequentialAgent(
     name="daily_audit_pipeline",
     description=(
-        "Fetches the day's news quiz and audits it against the editorial"
-        " rubric. ReporterAgent (Firestore write + SendGrid notify) lands"
-        " Day 2 — see quizzy-auditor/SPEC.md §3."
+        "Fetches the day's news quiz, audits it against the editorial rubric,"
+        " and reports results to Firestore with optional SendGrid notification."
     ),
     sub_agents=[
         FetcherAgent(
@@ -59,5 +59,9 @@ root_agent = SequentialAgent(
             description="Fetches today's quiz from quizzy-news-service.",
         ),
         auditor_agent,
+        ReporterAgent(
+            name="reporter_agent",
+            description="Saves audit report to Firestore and sends email notification.",
+        ),
     ],
 )
