@@ -178,9 +178,7 @@ async def report_detail(date: str):
   """Render detailed audit report for a specific date."""
   try:
     db = get_db()
-    doc = db.collection("audits").document(f"audit_{date}").get()
-    if not doc.exists:
-      doc = db.collection("audits").document(date).get()
+    doc = db.collection("audits").document(date).get()
     if not doc.exists:
       raise HTTPException(status_code=404, detail="Report not found")
 

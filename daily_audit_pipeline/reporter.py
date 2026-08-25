@@ -47,25 +47,20 @@ class ReporterAgent(BaseAgent):
 
     # Save report to Firestore (audits/{quizDate} per SPEC.md §4)
     questions_data = [
-        {"question": q.question, "approved": q.approved, "review": q.review}
+        {"question": q.question, "approved": q.approved, "review": q.review if q.review else ""}
         for q in audit_results
     ]
 
     report_doc = {
         "quizDate": quiz_date,
-        "quiz_date": quiz_date,
         "generatedAt": datetime.now().isoformat() + "Z",
         "model": "gemini-3.7-flash",
         "questions": questions_data,
-        "audit_results": questions_data,
         "summary": {
             "total": total_questions,
             "approved": approved_count,
             "failed": len(failed_questions),
         },
-        "total_questions": total_questions,
-        "approved": approved_count,
-        "failed": len(failed_questions),
     }
 
     try:

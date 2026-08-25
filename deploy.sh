@@ -66,7 +66,7 @@ gcloud run deploy "${SERVICE_NAME}" \
     --memory=2Gi \
     --cpu=2 \
     --timeout=3600 \
-    --set-env-vars="GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=global,GOOGLE_GENAI_USE_ENTERPRISE=1,SKIP_AUTH=true" \
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=global,GOOGLE_GENAI_USE_ENTERPRISE=1" \
     --service-account="${COMPUTE_SA}"
 
 # Get the service URL
