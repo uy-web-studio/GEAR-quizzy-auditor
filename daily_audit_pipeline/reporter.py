@@ -40,14 +40,14 @@ class ReporterAgent(BaseAgent):
     total_questions = len(audit_results)
     approved_count = sum(1 for q in audit_results if q.approved)
     failed_questions = [
-        {"question": q.question, "review": q.review}
+        {"question": q.question, "review": q.review if q.review else ""}
         for q in audit_results
         if not q.approved
     ]
 
     # Save report to Firestore (audits/{quizDate} per SPEC.md §4)
     questions_data = [
-        {"question": q.question, "approved": q.approved, "review": q.review or None}
+        {"question": q.question, "approved": q.approved, "review": q.review}
         for q in audit_results
     ]
 
@@ -73,7 +73,6 @@ class ReporterAgent(BaseAgent):
       db = firestore.Client(project=project_id) if project_id else firestore.Client()
       # Set document using quiz_date and audit_quiz_date for compatibility
       db.collection("audits").document(quiz_date).set(report_doc)
-      db.collection("audits").document(f"audit_{quiz_date}").set(report_doc)
       firestore_status = "saved"
     except Exception as e:
       print(f"Warning: Could not save report to Firestore: {e}")

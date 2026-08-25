@@ -13,8 +13,9 @@ QUIZ_ENDPOINT = "https://getdailygemini-mgpsab4ctq-uc.a.run.app"
 
 
 class FetcherAgent(BaseAgent):
-  """Tool-only agent (no LLM call): fetches the day's quiz and hands it to
-  the next agent in the pipeline via conversation history.
+  """Tool-only agent (no LLM call): fetches the day's quiz from
+  quizzy-news-service and hands it to the next agent in the pipeline
+  via conversation history.
   """
 
   @override
