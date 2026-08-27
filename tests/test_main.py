@@ -60,7 +60,7 @@ def test_report_detail_found(client):
   with patch("main.get_db", return_value=mock_db):
     response = client.get("/reports/2026-08-22")
     assert response.status_code == 200
-    assert "Audit Report for 2026-08-22" in response.text
+    assert "Audit — 2026-08-22" in response.text
     assert "Rule 1 failure" in response.text
 
 

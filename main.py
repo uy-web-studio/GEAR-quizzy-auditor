@@ -26,6 +26,77 @@ app = FastAPI(
     description="Daily news quiz quality audit and reporting system",
 )
 
+# Visual language borrowed from quizzy.news (the game this pipeline audits):
+# soft sky-blue field, Lexend, and flat/solid "pressed" shadows — never
+# blurred — colored a darker shade of whatever they sit under.
+FONT_LINKS = """\
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;600;700&display=swap" rel="stylesheet">"""
+
+SHARED_STYLES = """\
+    :root {
+      --bg: #eaf4fe;
+      --card: #ffffff;
+      --ink: #3d3d3d;
+      --muted: #909090;
+      --line: #e3e3e3;
+      --brand: #53adf0;
+      --brand-shadow: #3a8ac9;
+      --good: #6ba530;
+      --good-shadow: #548024;
+      --good-tint: #defebf;
+      --bad: #e95750;
+      --bad-shadow: #c23f39;
+      --bad-tint: #fad1d1;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Lexend', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    a { color: var(--brand); }
+    a:hover { text-decoration: underline; }
+    a:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+    .container { max-width: 1080px; margin: 0 auto; padding: 0 20px 40px; }
+    .topbar { padding: 40px 20px 28px; text-align: center; }
+    .topbar h1 {
+      display: inline-block;
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      padding-bottom: 8px;
+      border-bottom: 3px dashed var(--brand);
+    }
+    .topbar p { margin-top: 14px; color: var(--muted); font-size: 15px; }
+    .page-header { padding: 32px 20px 8px; }
+    .page-header h1 { font-size: 24px; font-weight: 700; margin-top: 10px; }
+    .back-link { color: var(--brand); text-decoration: none; font-weight: 600; font-size: 14px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; margin: 8px 0 28px; }
+    .stat-card { background: var(--card); border-radius: 10px; padding: 20px 22px; box-shadow: 0 4px 0 #c7c7c7; }
+    .stat-card.good { box-shadow: 0 4px 0 var(--good-shadow); }
+    .stat-card.bad { box-shadow: 0 4px 0 var(--bad-shadow); }
+    .stat-value { font-size: 30px; font-weight: 700; }
+    .stat-card.good .stat-value { color: var(--good); }
+    .stat-card.bad .stat-value { color: var(--bad); }
+    .stat-label { margin-top: 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+    .table-wrap { background: var(--card); border-radius: 10px; box-shadow: 0 4px 0 #c7c7c7; overflow: hidden; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 480px; }
+    th { text-align: left; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); padding: 14px 18px; border-bottom: 1px solid var(--line); }
+    td { padding: 14px 18px; border-bottom: 1px solid var(--line); font-size: 14px; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f5faff; }
+    .badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+    .badge.good { background: var(--good-tint); color: var(--good-shadow); }
+    .badge.bad { background: var(--bad-tint); color: var(--bad-shadow); }
+    .card-list { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }
+    .fail-card { background: var(--bad-tint); border-radius: 10px; padding: 18px 20px; box-shadow: 0 4px 0 var(--bad-shadow); }
+    .fail-card .q { font-weight: 600; margin-bottom: 6px; }
+    .fail-card .why { font-size: 13px; color: var(--bad-shadow); }
+    .empty { text-align: center; color: var(--muted); padding: 48px 20px; }
+    .footer { text-align: center; margin-top: 36px; color: var(--muted); font-size: 13px; }"""
+
 
 def get_db():
   """Lazy initialization of Firestore client."""
@@ -88,16 +159,27 @@ async def dashboard():
 
   rows_html = ""
   for audit in audit_list:
-    status = "✅ Pass" if audit["failed"] == 0 else "❌ Fail"
+    badge = (
+        '<span class="badge good">PASS</span>' if audit["failed"] == 0
+        else '<span class="badge bad">FAIL</span>'
+    )
     rows_html += f"""
     <tr>
-      <td><a href="/reports/{audit['date']}" style="color: #667eea; text-decoration: none;">{audit['date']}</a></td>
+      <td><a href="/reports/{audit['date']}">{audit['date']}</a></td>
       <td style="text-align: center;">{audit['total']}</td>
-      <td style="text-align: center; color: #4caf50;">{audit['approved']}</td>
-      <td style="text-align: center; color: #d32f2f;">{audit['failed']}</td>
-      <td style="text-align: center;">{status}</td>
+      <td style="text-align: center; color: var(--good);">{audit['approved']}</td>
+      <td style="text-align: center; color: var(--bad);">{audit['failed']}</td>
+      <td style="text-align: center;">{badge}</td>
     </tr>
     """
+
+  passed_count = sum(1 for a in audit_list if a["failed"] == 0)
+  failed_count = sum(1 for a in audit_list if a["failed"] > 0)
+  empty_state = (
+      '<div class="empty">No audits yet — the first scheduled run '
+      "(daily, 9am America/Los_Angeles) will populate this page "
+      "automatically.</div>"
+  )
 
   return f"""
   <!DOCTYPE html>
@@ -106,29 +188,15 @@ async def dashboard():
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Quizzy Auditor Dashboard</title>
+{FONT_LINKS}
       <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto; background: #f5f5f5; }}
-        .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 20px; text-align: center; }}
-        .header h1 {{ font-size: 32px; margin-bottom: 8px; }}
-        .header p {{ opacity: 0.9; font-size: 16px; }}
-        .container {{ max-width: 1200px; margin: 0 auto; padding: 20px; }}
-        .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 32px; }}
-        .stat-card {{ background: white; padding: 24px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
-        .stat-value {{ font-size: 32px; font-weight: bold; color: #667eea; }}
-        .stat-label {{ font-size: 14px; color: #666; text-transform: uppercase; margin-top: 8px; }}
-        .table-container {{ background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; }}
-        table {{ width: 100%; border-collapse: collapse; }}
-        th {{ background: #f5f5f5; padding: 16px; text-align: left; font-weight: 600; font-size: 13px; color: #333; border-bottom: 1px solid #eee; }}
-        td {{ padding: 16px; border-bottom: 1px solid #eee; }}
-        tr:hover {{ background: #f9f9f9; }}
-        .footer {{ text-align: center; margin-top: 40px; color: #666; font-size: 14px; }}
+{SHARED_STYLES}
       </style>
     </head>
     <body>
-      <div class="header">
-        <h1>🎯 Quizzy Auditor</h1>
-        <p>Daily News Quiz Quality Audit Dashboard</p>
+      <div class="topbar">
+        <h1>Quizzy Auditor</h1>
+        <p>Daily QC for quizzy.news — {len(audit_list)} audit{"" if len(audit_list) == 1 else "s"} recorded</p>
       </div>
       <div class="container">
         <div class="stats">
@@ -136,36 +204,21 @@ async def dashboard():
             <div class="stat-value">{len(audit_list)}</div>
             <div class="stat-label">Total Audits</div>
           </div>
-          <div class="stat-card">
-            <div class="stat-value" style="color: #4caf50;">{sum(1 for a in audit_list if a['failed'] == 0)}</div>
+          <div class="stat-card good">
+            <div class="stat-value">{passed_count}</div>
             <div class="stat-label">Passed</div>
           </div>
-          <div class="stat-card">
-            <div class="stat-value" style="color: #d32f2f;">{sum(1 for a in audit_list if a['failed'] > 0)}</div>
+          <div class="stat-card bad">
+            <div class="stat-value">{failed_count}</div>
             <div class="stat-label">Failed</div>
           </div>
         </div>
 
-        <div class="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th style="text-align: center;">Total</th>
-                <th style="text-align: center;">Approved</th>
-                <th style="text-align: center;">Failed</th>
-                <th style="text-align: center;">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows_html if rows_html else '<tr><td colspan="5" style="text-align: center; color: #999; padding: 40px;">No audit reports yet</td></tr>'}
-            </tbody>
-          </table>
-        </div>
+        {'<div class="table-wrap"><table><thead><tr><th>Date</th><th style="text-align: center;">Total</th><th style="text-align: center;">Approved</th><th style="text-align: center;">Failed</th><th style="text-align: center;">Result</th></tr></thead><tbody>' + rows_html + '</tbody></table></div>' if rows_html else empty_state}
 
         <div class="footer">
-          <p>Quizzy Auditor — Running on Google ADK + Gemini 3.7 Flash</p>
-          <p>Last update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+          <p>Quizzy Auditor — Google ADK + Gemini 3.7 Flash</p>
+          <p>Last checked: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
         </div>
       </div>
     </body>
@@ -188,15 +241,22 @@ async def report_detail(date: str):
     failed = data.get("failed", data.get("summary", {}).get("failed", max(0, total - approved)))
     audit_results = data.get("audit_results") or data.get("questions", [])
 
-    failed_rows = ""
-    for result in audit_results:
-      if not result.get("approved", False):
-        failed_rows += f"""
-        <tr>
-          <td style="padding: 12px;">{result.get('question', 'N/A')}</td>
-          <td style="padding: 12px; color: #d32f2f;">{result.get('review', 'Failed')}</td>
-        </tr>
+    failed_questions = [r for r in audit_results if not r.get("approved", False)]
+    fail_cards = "".join(
+        f"""
+        <div class="fail-card">
+          <div class="q">{r.get('question', 'N/A')}</div>
+          <div class="why">{r.get('review') or 'Failed'}</div>
+        </div>
         """
+        for r in failed_questions
+    )
+    failed_section = (
+        f'<h2 style="margin-top: 32px; margin-bottom: 4px;">Failed Questions</h2>'
+        f'<div class="card-list">{fail_cards}</div>'
+        if fail_cards
+        else '<div class="empty">All questions passed — nothing to review.</div>'
+    )
 
     return f"""
     <!DOCTYPE html>
@@ -205,71 +265,36 @@ async def report_detail(date: str):
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Audit Report — {date}</title>
+{FONT_LINKS}
         <style>
-          * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-          body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto; background: #f5f5f5; }}
-          .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 20px; }}
-          .container {{ max-width: 900px; margin: 0 auto; }}
-          .back-link {{ color: rgba(255,255,255,0.8); text-decoration: none; margin-bottom: 16px; display: inline-block; }}
-          .back-link:hover {{ color: white; }}
-          .header h1 {{ font-size: 28px; margin-bottom: 8px; }}
-          .content {{ background: white; margin: 20px; padding: 32px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
-          .summary {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 32px; }}
-          .summary-item {{ padding: 16px; background: #f9f9f9; border-radius: 6px; }}
-          .summary-value {{ font-size: 24px; font-weight: bold; }}
-          .summary-label {{ font-size: 12px; color: #666; text-transform: uppercase; margin-top: 8px; }}
-          .failed-section {{ margin-top: 32px; }}
-          .failed-section h2 {{ margin-bottom: 16px; }}
-          table {{ width: 100%; border-collapse: collapse; }}
-          th {{ background: #f5f5f5; padding: 12px; text-align: left; font-weight: 600; border-bottom: 1px solid #eee; }}
-          td {{ padding: 12px; border-bottom: 1px solid #eee; }}
-          .footer {{ text-align: center; padding: 20px; color: #666; font-size: 13px; }}
+{SHARED_STYLES}
         </style>
       </head>
       <body>
-        <div class="header">
-          <div class="container">
-            <a href="/" class="back-link">← Back to Dashboard</a>
-            <h1>Audit Report for {date}</h1>
-          </div>
+        <div class="page-header container">
+          <a href="/" class="back-link">← All audits</a>
+          <h1>Audit — {date}</h1>
         </div>
         <div class="container">
-          <div class="content">
-            <div class="summary">
-              <div class="summary-item">
-                <div class="summary-value">{total}</div>
-                <div class="summary-label">Total Questions</div>
-              </div>
-              <div class="summary-item">
-                <div class="summary-value" style="color: #4caf50;">{approved}</div>
-                <div class="summary-label">Approved</div>
-              </div>
-              <div class="summary-item">
-                <div class="summary-value" style="color: #d32f2f;">{failed}</div>
-                <div class="summary-label">Failed</div>
-              </div>
+          <div class="stats">
+            <div class="stat-card">
+              <div class="stat-value">{total}</div>
+              <div class="stat-label">Total Questions</div>
             </div>
+            <div class="stat-card good">
+              <div class="stat-value">{approved}</div>
+              <div class="stat-label">Approved</div>
+            </div>
+            <div class="stat-card bad">
+              <div class="stat-value">{failed}</div>
+              <div class="stat-label">Failed</div>
+            </div>
+          </div>
 
-            {"" if not failed_rows else f'''
-            <div class="failed-section">
-              <h2>Failed Questions</h2>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Question</th>
-                    <th>Reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {failed_rows}
-                </tbody>
-              </table>
-            </div>
-            '''}
+          {failed_section}
 
-            <div class="footer">
-              <p>Generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
-            </div>
+          <div class="footer">
+            <p>Generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
           </div>
         </div>
       </body>
