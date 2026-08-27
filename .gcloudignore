@@ -1,0 +1,19 @@
+# Allow all source files through for Cloud Build
+#
+# By default gcloudignore excludes many files.
+# We want the full source tree + Dockerfile for the container build.
+# Explicitly allow everything.
+
+# Allow the Dockerfile
+!Dockerfile
+
+# Allow Python source
+!*.py
+
+# Allow configs
+!requirements.txt
+!cloudbuild.yaml
+!deploy.sh
+
+# Allow test fixtures
+!tests/

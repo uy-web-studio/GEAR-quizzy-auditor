@@ -1,7 +1,7 @@
 # Quizzy Auditor — Design Spec
 
 **Hackathon:** All Things Agentic (devpost) — Taskmaster track
-**Status:** Draft, pending review
+**Status:** Deployed and running (Cloud Run + Cloud Scheduler, daily 09:00 America/Los_Angeles)
 **Author:** Donovan + Claude, 2026-08-20
 
 ## 1. Problem & context
@@ -260,6 +260,29 @@ BestBeagle Agent too — see its own SPEC.md)
    project owner token. The reliable way to confirm a model id + region
    combination is live is a real `generateContent` POST probe (200 vs.
    404/403), not a discovery/list API call.
+5. **`--allow-unauthenticated` silently no-ops under a "Domain Restricted
+   Sharing" org policy (`iam.allowedPolicyMemberDomains`).** New GCP
+   orgs tied to a Workspace domain commonly have this set, which blocks
+   `allUsers`/`allAuthenticatedUsers` from ever being granted IAM roles —
+   `gcloud run deploy --allow-unauthenticated` and
+   `gcloud run services add-iam-policy-binding ... --member=allUsers`
+   both fail (or appear to succeed while the binding never lands) with
+   no obvious error pointing at the real cause; the symptom is every
+   route, including intentionally-public dashboard `GET`s, returning
+   `403`. Fix: override the constraint to `Allow All` scoped to just
+   this project (Org Policies page in the console, or
+   `gcloud resource-manager org-policies set-policy` with a
+   `listPolicy: {allValues: ALLOW}` YAML, `--project=<id>` — do **not**
+   apply org-wide). Setting the org policy itself requires
+   `roles/orgpolicy.policyAdmin`, which `roles/resourcemanager
+   .organizationAdmin` does **not** include by default — an org admin
+   may need to self-grant `orgpolicy.policyAdmin` on the project first.
+   App-level route auth (e.g. this service's own OIDC check on
+   `/trigger-audit` in `main.py`) still works independently of this —
+   Cloud Run IAM is all-or-nothing per service with no per-route
+   granularity, so "public reads, authenticated writes" requires both
+   the org policy allowing `allUsers` *and* the app doing its own
+   per-route check.
 
 ## 7. Cost / budget (runtime, not dev-time)
 

@@ -65,7 +65,7 @@ async def dashboard():
   audit_list = []
   try:
     db = get_db()
-    audits = db.collection("audits").order_by("quiz_date", direction="DESCENDING").limit(30).stream()
+    audits = db.collection("audits").order_by("quizDate", direction="DESCENDING").limit(30).stream()
     seen_dates = set()
     for doc in audits:
       data = doc.to_dict()

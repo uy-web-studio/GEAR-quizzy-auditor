@@ -34,13 +34,16 @@ steps:
       - 'quizzy-auditor'
       - '--image=gcr.io/$PROJECT_ID/quizzy-auditor:$COMMIT_SHA'
       - '--platform=managed'
-      - '--region=us-central1'
+      - '--region=${_REGION}'
       - '--allow-unauthenticated'
       - '--set-env-vars=GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=global,GOOGLE_GENAI_USE_ENTERPRISE=1'
 
 images:
   - 'gcr.io/$PROJECT_ID/quizzy-auditor:$COMMIT_SHA'
   - 'gcr.io/$PROJECT_ID/quizzy-auditor:latest'
+
+substitutions:
+  _REGION: 'us-central1'
 
 options:
   machineType: 'N1_HIGHCPU_8'

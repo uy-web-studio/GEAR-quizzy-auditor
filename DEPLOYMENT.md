@@ -207,8 +207,11 @@ curl ${SERVICE_URL}/health
 # View dashboard
 open ${SERVICE_URL}
 
-# Manually trigger audit (with SKIP_AUTH=true)
-curl -X POST "${SERVICE_URL}/trigger-audit?env=SKIP_AUTH=true"
+# Manually trigger audit (requires a valid OIDC identity token — the
+# deployed service does NOT accept a SKIP_AUTH query param; that env var
+# is for local-only testing, see "Run Locally" above)
+curl -X POST "${SERVICE_URL}/trigger-audit" \
+    -H "Authorization: Bearer $(gcloud auth print-identity-token --audiences=${SERVICE_URL})"
 
 # View logs
 gcloud run logs read quizzy-auditor --region=us-central1 --limit=50
@@ -259,10 +262,14 @@ gcloud logging read "resource.type=cloud_run_managed AND resource.labels.service
 
 ## Next Steps
 
-1. ✅ Implement SendGrid alerting and Cloud Run deployment
-2. ⬜ Create dashboard frontend with report history
-3. ⬜ Set up Cloud Scheduler daily trigger
-4. ⬜ Record demo video and submit
+1. ✅ Implement SendGrid alerting
+2. ✅ Build dashboard frontend with report history (`main.py`)
+3. ✅ Deploy to Cloud Run — live at the service URL, public dashboard,
+   authenticated `/trigger-audit` (see SPEC.md §6 gotcha 5 for the org
+   policy override this required)
+4. ✅ Set up Cloud Scheduler daily trigger (`0 9 * * *`
+   America/Los_Angeles)
+5. ⬜ Record demo video and submit
 
 ## Files Reference
 

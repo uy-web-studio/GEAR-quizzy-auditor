@@ -11,7 +11,7 @@ and hackathon disclosure notes.
 Cloud Scheduler (daily) -> Cloud Run: ADK SequentialAgent "daily_audit_pipeline"
   1. FetcherAgent  (tool-only)  -> GET the day's quiz from quizzy-news-service
   2. AuditorAgent  (LlmAgent)   -> gemini-3.7-flash, rubric + google_search fact-check
-  3. ReporterAgent (tool-only)  -> Firestore + SendGrid (Day 2, not yet built)
+  3. ReporterAgent (tool-only)  -> Firestore + SendGrid (deployed)
 ```
 
 ## Prerequisites

@@ -12,7 +12,7 @@ SERVICE_NAME="quizzy-auditor"
 IMAGE_NAME="${SERVICE_NAME}:latest"
 GCR_IMAGE="gcr.io/${PROJECT_ID}/${IMAGE_NAME}"
 SCHEDULER_JOB_NAME="quizzy-auditor-daily-trigger"
-SCHEDULER_TIME="09:00"  # 9 AM America/Los_Angeles daily
+SCHEDULER_HOUR="9"  # 9 AM America/Los_Angeles daily
 
 echo "📦 Quizzy Auditor Deployment"
 echo "=============================="
@@ -52,9 +52,13 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
 
 # Step 3: Build and push Docker image
 echo "3️⃣  Building and pushing Docker image..."
+# COMMIT_SHA is a Cloud Build substitution that's only auto-populated for
+# trigger-based builds; a manual `gcloud builds submit` like this one needs
+# it passed explicitly or the image tag comes out empty.
+BUILD_COMMIT_SHA=$(git rev-parse --short=12 HEAD)
 gcloud builds submit . \
     --config=cloudbuild.yaml \
-    --substitutions=_REGION="${REGION}"
+    --substitutions=_REGION="${REGION}",COMMIT_SHA="${BUILD_COMMIT_SHA}"
 
 # Step 4: Deploy to Cloud Run
 echo "4️⃣  Deploying to Cloud Run..."
@@ -91,7 +95,7 @@ fi
 
 gcloud scheduler jobs create http "${SCHEDULER_JOB_NAME}" \
     --location="${REGION}" \
-    --schedule="0 ${SCHEDULER_TIME} * * *" \
+    --schedule="0 ${SCHEDULER_HOUR} * * *" \
     --time-zone="America/Los_Angeles" \
     --uri="${SERVICE_URL}/trigger-audit" \
     --http-method=POST \
@@ -100,7 +104,7 @@ gcloud scheduler jobs create http "${SCHEDULER_JOB_NAME}" \
 
 echo "✅ Cloud Scheduler job created!"
 echo "   Job: ${SCHEDULER_JOB_NAME}"
-echo "   Schedule: Daily at ${SCHEDULER_TIME} America/Los_Angeles"
+echo "   Schedule: Daily at ${SCHEDULER_HOUR}:00 America/Los_Angeles"
 echo ""
 
 # Step 6: Create/update Secret Manager secret (if needed)
@@ -122,5 +126,5 @@ echo "Scheduler Job: ${SCHEDULER_JOB_NAME}"
 echo ""
 echo "Next steps:"
 echo "1. Add SendGrid API key to Secret Manager if not already done"
-echo "2. Test the deployment: curl -X POST '${SERVICE_URL}/trigger-audit?env=SKIP_AUTH=true'"
+echo "2. Test the deployment: curl -X POST '${SERVICE_URL}/trigger-audit' -H \"Authorization: Bearer \$(gcloud auth print-identity-token --audiences=${SERVICE_URL})\""
 echo "3. View logs: gcloud run logs read ${SERVICE_NAME} --region=${REGION} --limit=50"
