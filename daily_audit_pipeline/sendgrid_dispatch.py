@@ -23,6 +23,19 @@ DEFAULT_MAX_DELAY: float = 32.0
 DEFAULT_RETRYABLE_STATUS_CODES: Set[int] = {429, 500, 502, 503, 504}
 
 
+def _sender_email() -> str:
+  """The verified SendGrid sender identity to send from.
+
+  SendGrid rejects any `from` address that isn't a verified Single Sender
+  or backed by domain authentication — an arbitrary/unowned domain (e.g.
+  the previous "auditor@quizzy-news.internal" placeholder) gets a 403
+  every time. uyweb.studio is domain-authenticated in SendGrid (confirmed
+  2026-08-29 via a live 202 send), so any @uyweb.studio address works as
+  a sender; override with FROM_EMAIL for a different verified identity.
+  """
+  return os.environ.get("FROM_EMAIL", "auditor@uyweb.studio")
+
+
 @dataclass
 class RetryConfig:
   """Configuration for SendGrid exponential backoff retry policy."""
@@ -432,7 +445,7 @@ async def send_audit_report(
     }
 
   mail = Mail(
-      from_email=From("auditor@quizzy-news.internal"),
+      from_email=From(_sender_email()),
       to_emails=To(recipient_email),
       subject=f"Quizzy Auditor Report — {quiz_date}",
       html_content=Content("text/html", html_content),
@@ -515,7 +528,7 @@ async def send_no_quiz_alert(
     }
 
   mail = Mail(
-      from_email=From("auditor@quizzy-news.internal"),
+      from_email=From(_sender_email()),
       to_emails=To(recipient_email),
       subject=subject,
       html_content=Content("text/html", html_content),

@@ -110,6 +110,11 @@ GOOGLE_GENAI_USE_ENTERPRISE=1,\
 RECIPIENT_EMAIL=donovanuy@gmail.com
 ```
 
+`FROM_EMAIL` is optional — defaults to `auditor@uyweb.studio` (a
+domain-authenticated SendGrid sender, confirmed working 2026-08-29; see
+SPEC.md §6 gotcha 6). Only set it to override with a different verified
+sender identity.
+
 ## Deployment Steps
 
 ### Option A: Automated Deployment (Recommended)

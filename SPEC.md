@@ -299,6 +299,25 @@ BestBeagle Agent too — see its own SPEC.md)
    granularity, so "public reads, authenticated writes" requires both
    the org policy allowing `allUsers` *and* the app doing its own
    per-route check.
+6. **SendGrid rejects any `from` address that isn't a verified Sender
+   Identity — silently, per-send, not at deploy or key-creation time.**
+   The original placeholder (`auditor@quizzy-news.internal`, an
+   unownable domain) meant every audit-failure email since the project's
+   first commit had been failing with `403 Forbidden: "The from address
+   does not match a verified Sender Identity"` — masked because
+   `ReporterAgent` only logs the SendGrid result into an internal ADK
+   event, never surfaces or alerts on a failed *send* itself. The
+   API key being valid is a red herring; a valid key still gets 403'd by
+   an unverified sender. Confirmed working (2026-08-29, live `202` send)
+   once `uyweb.studio` was domain-authenticated in SendGrid (Settings →
+   Sender Authentication) and the code's hardcoded sender was replaced
+   with `auditor@uyweb.studio` (`_sender_email()` in
+   `sendgrid_dispatch.py`, overridable via `FROM_EMAIL` env var). When
+   testing SendGrid changes, always do a real non-dry-run send and check
+   the actual delivered inbox — a 202 from the API only means SendGrid
+   *accepted* the request, not that it was deliverable in the first
+   place (a bad sender still queues fine and only fails downstream in
+   some configurations, though in this case it 403'd synchronously).
 
 ## 7. Cost / budget (runtime, not dev-time)
 
