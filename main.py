@@ -90,6 +90,7 @@ SHARED_STYLES = """\
     .badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; }
     .badge.good { background: var(--good-tint); color: var(--good-shadow); }
     .badge.bad { background: var(--bad-tint); color: var(--bad-shadow); }
+    .badge.neutral { background: #ececec; color: var(--muted); }
     .card-list { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }
     .fail-card { background: var(--bad-tint); border-radius: 10px; padding: 18px 20px; box-shadow: 0 4px 0 var(--bad-shadow); }
     .fail-card .q { font-weight: 600; margin-bottom: 6px; }
@@ -159,10 +160,12 @@ async def dashboard():
 
   rows_html = ""
   for audit in audit_list:
-    badge = (
-        '<span class="badge good">PASS</span>' if audit["failed"] == 0
-        else '<span class="badge bad">FAIL</span>'
-    )
+    if audit["total"] == 0:
+      badge = '<span class="badge neutral">NO QUIZ</span>'
+    elif audit["failed"] == 0:
+      badge = '<span class="badge good">PASS</span>'
+    else:
+      badge = '<span class="badge bad">FAIL</span>'
     rows_html += f"""
     <tr>
       <td><a href="/reports/{audit['date']}">{audit['date']}</a></td>
@@ -173,7 +176,8 @@ async def dashboard():
     </tr>
     """
 
-  passed_count = sum(1 for a in audit_list if a["failed"] == 0)
+  no_quiz_count = sum(1 for a in audit_list if a["total"] == 0)
+  passed_count = sum(1 for a in audit_list if a["total"] > 0 and a["failed"] == 0)
   failed_count = sum(1 for a in audit_list if a["failed"] > 0)
   empty_state = (
       '<div class="empty">No audits yet — the first scheduled run '
@@ -212,6 +216,10 @@ async def dashboard():
             <div class="stat-value">{failed_count}</div>
             <div class="stat-label">Failed</div>
           </div>
+          <div class="stat-card">
+            <div class="stat-value">{no_quiz_count}</div>
+            <div class="stat-label">No Quiz</div>
+          </div>
         </div>
 
         {'<div class="table-wrap"><table><thead><tr><th>Date</th><th style="text-align: center;">Total</th><th style="text-align: center;">Approved</th><th style="text-align: center;">Failed</th><th style="text-align: center;">Result</th></tr></thead><tbody>' + rows_html + '</tbody></table></div>' if rows_html else empty_state}
@@ -240,23 +248,46 @@ async def report_detail(date: str):
     approved = data.get("approved", data.get("summary", {}).get("approved", 0))
     failed = data.get("failed", data.get("summary", {}).get("failed", max(0, total - approved)))
     audit_results = data.get("audit_results") or data.get("questions", [])
+    status = data.get("status")
+    fetch_attempts = data.get("fetchAttempts")
 
-    failed_questions = [r for r in audit_results if not r.get("approved", False)]
-    fail_cards = "".join(
-        f"""
-        <div class="fail-card">
-          <div class="q">{r.get('question', 'N/A')}</div>
-          <div class="why">{r.get('review') or 'Failed'}</div>
-        </div>
-        """
-        for r in failed_questions
-    )
-    failed_section = (
-        f'<h2 style="margin-top: 32px; margin-bottom: 4px;">Failed Questions</h2>'
-        f'<div class="card-list">{fail_cards}</div>'
-        if fail_cards
-        else '<div class="empty">All questions passed — nothing to review.</div>'
-    )
+    if total == 0:
+      # No quiz was available for the auditor to review — distinct from
+      # "audited N questions and none failed". See ReporterAgent's no-quiz
+      # retry policy (checks hourly, alerts after MAX_FETCH_ATTEMPTS).
+      if status == "empty_final" or (fetch_attempts and fetch_attempts >= 4):
+        failed_section = (
+            '<div class="empty">No quiz was available to audit — the '
+            f'fetcher checked {fetch_attempts or "several"} times and never '
+            "received questions. The team has been alerted.</div>"
+        )
+      else:
+        retry_note = f" (attempt {fetch_attempts}/4, retrying hourly)" if fetch_attempts else ""
+        failed_section = (
+            f'<div class="empty">No quiz was available to audit yet{retry_note} '
+            "— nothing to review.</div>"
+        )
+      stat_approved_class = ""
+      stat_failed_class = ""
+    else:
+      failed_questions = [r for r in audit_results if not r.get("approved", False)]
+      fail_cards = "".join(
+          f"""
+          <div class="fail-card">
+            <div class="q">{r.get('question', 'N/A')}</div>
+            <div class="why">{r.get('review') or 'Failed'}</div>
+          </div>
+          """
+          for r in failed_questions
+      )
+      failed_section = (
+          f'<h2 style="margin-top: 32px; margin-bottom: 4px;">Failed Questions</h2>'
+          f'<div class="card-list">{fail_cards}</div>'
+          if fail_cards
+          else '<div class="empty">All questions passed — nothing to review.</div>'
+      )
+      stat_approved_class = "good"
+      stat_failed_class = "bad"
 
     return f"""
     <!DOCTYPE html>
@@ -281,11 +312,11 @@ async def report_detail(date: str):
               <div class="stat-value">{total}</div>
               <div class="stat-label">Total Questions</div>
             </div>
-            <div class="stat-card good">
+            <div class="stat-card {stat_approved_class}">
               <div class="stat-value">{approved}</div>
               <div class="stat-label">Approved</div>
             </div>
-            <div class="stat-card bad">
+            <div class="stat-card {stat_failed_class}">
               <div class="stat-value">{failed}</div>
               <div class="stat-label">Failed</div>
             </div>
@@ -316,6 +347,28 @@ async def trigger_audit(request: Request):
   # Verify the request is from Cloud Scheduler
   if not verify_cloud_scheduler_request(request):
     raise HTTPException(status_code=401, detail="Unauthorized")
+
+  # The scheduler fires hourly so ReporterAgent can retry a no-quiz day up
+  # to MAX_FETCH_ATTEMPTS times before alerting. Once today's audit is
+  # resolved (real questions saved, or the retry budget is exhausted and
+  # the alert sent), skip re-running the pipeline for the rest of the day.
+  quiz_date_today = datetime.now().strftime("%Y-%m-%d")
+  try:
+    check_db = get_db()
+    existing_doc = check_db.collection("audits").document(quiz_date_today).get()
+    if existing_doc.exists:
+      existing_status = (existing_doc.to_dict() or {}).get("status")
+      if existing_status in ("complete", "empty_final"):
+        return {
+            "status": "skipped",
+            "timestamp": datetime.now().isoformat(),
+            "message": (
+                f"Audit for {quiz_date_today} already resolved "
+                f"(status={existing_status}); not re-running."
+            ),
+        }
+  except Exception as e:
+    print(f"Warning: could not check existing audit status before trigger: {e}")
 
   try:
     session_service = InMemorySessionService()

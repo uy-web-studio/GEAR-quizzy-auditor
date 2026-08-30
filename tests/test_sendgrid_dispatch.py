@@ -29,6 +29,7 @@ from daily_audit_pipeline.sendgrid_dispatch import (
     calculate_backoff_delay,
     is_retryable_error,
     send_audit_report,
+    send_no_quiz_alert,
 )
 
 
@@ -442,6 +443,44 @@ class TestHTMLReportBuilder:
     assert "Quizzy Auditor Report" in html
     assert "5" in html
     assert "Failed Questions" not in html
+
+
+class TestNoQuizAlert:
+  """Verify the no-quiz alert email sent after retries are exhausted."""
+
+  def test_dry_run_mode(self):
+    """Dry-run mode returns preview without invoking SendGrid client."""
+    result = asyncio.run(
+        send_no_quiz_alert(
+            recipient_email="test@example.com",
+            quiz_date="2026-08-28",
+            attempts=4,
+            dry_run=True,
+        )
+    )
+
+    assert result["status"] == "dry_run"
+    assert result["recipient"] == "test@example.com"
+    assert result["quiz_date"] == "2026-08-28"
+    assert result["fetch_attempts"] == 4
+    assert "html_preview" in result
+
+  def test_sends_via_client(self):
+    """Alert dispatches through the SendGrid client like a normal report."""
+    mock_client = MockSendGridClient([MockSendGridResponse(202)])
+
+    result = asyncio.run(
+        send_no_quiz_alert(
+            recipient_email="test@example.com",
+            quiz_date="2026-08-28",
+            attempts=4,
+            client=mock_client,
+        )
+    )
+
+    assert result["status"] == "sent"
+    assert result["status_code"] == 202
+    assert mock_client.call_count == 1
 
 
 class TestReporterAgentIntegration:

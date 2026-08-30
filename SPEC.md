@@ -1,7 +1,7 @@
 # Quizzy Auditor — Design Spec
 
 **Hackathon:** All Things Agentic (devpost) — Taskmaster track
-**Status:** Deployed and running (Cloud Run + Cloud Scheduler, daily 09:00 America/Los_Angeles)
+**Status:** Deployed and running (Cloud Run + Cloud Scheduler, hourly checks 09:00-12:00 America/Los_Angeles until the day's audit resolves — see §4's no-quiz retry policy)
 **Author:** Donovan + Claude, 2026-08-20
 
 ## 1. Problem & context
@@ -165,14 +165,30 @@ Run service in `us-central1` can call Vertex AI's `global` endpoint fine).
   "quizDate": "2026-08-21",
   "generatedAt": "2026-08-21T09:00:12Z",
   "model": "<gemini model id>",
+  "status": "complete",
   "questions": [
-    {"question": "...", "approved": true, "review": null},
+    {"question": "...", "approved": true, "review": ""},
     {"question": "...", "approved": false,
      "review": "Answer 'Paris' not present in choices array."}
   ],
-  "summary": {"total": 5, "approved": 4}
+  "summary": {"total": 5, "approved": 4, "failed": 1}
 }
 ```
+
+**No-quiz retry policy:** if FetcherAgent/AuditorAgent come back with zero
+questions (upstream `quizzy-news-service` hadn't published yet, or errored),
+ReporterAgent does *not* immediately alert — a genuinely empty result looks
+identical to a temporary "not published yet" gap. Instead it writes
+`status: "empty"` with a `fetchAttempts` counter, and Cloud Scheduler
+re-triggers `/trigger-audit` hourly (`0 9-12 * * *`, 4 checks total).
+`/trigger-audit` no-ops once today's doc is `status: "complete"` or
+`"empty_final"`, so each hourly firing either does real work or costs one
+cheap Firestore read. Only on the 4th consecutive empty check does
+ReporterAgent write `status: "empty_final"` and send the no-quiz alert email
+(`send_no_quiz_alert` in `sendgrid_dispatch.py`) — so a single missed/late
+publish never pages anyone, only a quiz that's absent for ~3+ hours does.
+The dashboard and `/reports/{date}` render `status: "empty"/"empty_final"`
+distinctly from "all questions passed" (0 total ≠ 0 failures).
 
 ## 5. Audit rules (ported from `news-quiz-qc`, unchanged in substance)
 

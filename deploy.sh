@@ -12,7 +12,9 @@ SERVICE_NAME="quizzy-auditor"
 IMAGE_NAME="${SERVICE_NAME}:latest"
 GCR_IMAGE="gcr.io/${PROJECT_ID}/${IMAGE_NAME}"
 SCHEDULER_JOB_NAME="quizzy-auditor-daily-trigger"
-SCHEDULER_HOUR="9"  # 9 AM America/Los_Angeles daily
+SCHEDULER_HOUR="9"  # First check, 9 AM America/Los_Angeles
+SCHEDULER_RETRY_WINDOW_HOURS=3  # 3 hourly retries after the first check (4 checks total)
+SCHEDULER_LAST_HOUR=$((SCHEDULER_HOUR + SCHEDULER_RETRY_WINDOW_HOURS))
 
 echo "📦 Quizzy Auditor Deployment"
 echo "=============================="
@@ -95,7 +97,7 @@ fi
 
 gcloud scheduler jobs create http "${SCHEDULER_JOB_NAME}" \
     --location="${REGION}" \
-    --schedule="0 ${SCHEDULER_HOUR} * * *" \
+    --schedule="0 ${SCHEDULER_HOUR}-${SCHEDULER_LAST_HOUR} * * *" \
     --time-zone="America/Los_Angeles" \
     --uri="${SERVICE_URL}/trigger-audit" \
     --http-method=POST \
@@ -104,7 +106,10 @@ gcloud scheduler jobs create http "${SCHEDULER_JOB_NAME}" \
 
 echo "✅ Cloud Scheduler job created!"
 echo "   Job: ${SCHEDULER_JOB_NAME}"
-echo "   Schedule: Daily at ${SCHEDULER_HOUR}:00 America/Los_Angeles"
+echo "   Schedule: Hourly ${SCHEDULER_HOUR}:00-${SCHEDULER_LAST_HOUR}:00 America/Los_Angeles"
+echo "   (/trigger-audit is a no-op once today's audit is resolved, so this"
+echo "   only does real work on a no-quiz day — up to 4 checks before it"
+echo "   alerts and stops retrying.)"
 echo ""
 
 # Step 6: Create/update Secret Manager secret (if needed)

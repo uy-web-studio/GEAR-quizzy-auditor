@@ -267,8 +267,10 @@ gcloud logging read "resource.type=cloud_run_managed AND resource.labels.service
 3. ✅ Deploy to Cloud Run — live at the service URL, public dashboard,
    authenticated `/trigger-audit` (see SPEC.md §6 gotcha 5 for the org
    policy override this required)
-4. ✅ Set up Cloud Scheduler daily trigger (`0 9 * * *`
-   America/Los_Angeles)
+4. ✅ Set up Cloud Scheduler hourly trigger (`0 9-12 * * *`
+   America/Los_Angeles) — `/trigger-audit` no-ops once the day's audit is
+   resolved, so this only does real work while retrying a no-quiz day (see
+   SPEC.md §4's no-quiz retry policy)
 5. ⬜ Record demo video and submit
 
 ## Files Reference

@@ -64,6 +64,69 @@ def test_report_detail_found(client):
     assert "Rule 1 failure" in response.text
 
 
+def test_report_detail_no_quiz_still_retrying(client):
+  """GET /reports/{date} distinguishes 'nothing fetched yet' from 'all passed'."""
+  mock_doc = MagicMock()
+  mock_doc.exists = True
+  mock_doc.to_dict.return_value = {
+      "quizDate": "2026-08-28",
+      "status": "empty",
+      "fetchAttempts": 2,
+      "questions": [],
+      "summary": {"total": 0, "approved": 0, "failed": 0},
+  }
+
+  mock_db = MagicMock()
+  mock_db.collection.return_value.document.return_value.get.return_value = mock_doc
+
+  with patch("main.get_db", return_value=mock_db):
+    response = client.get("/reports/2026-08-28")
+    assert response.status_code == 200
+    assert "No quiz was available to audit yet" in response.text
+    assert "attempt 2/4" in response.text
+    assert "All questions passed — nothing to review." not in response.text
+
+
+def test_report_detail_no_quiz_final_alert(client):
+  """GET /reports/{date} shows the alerted state once retries are exhausted."""
+  mock_doc = MagicMock()
+  mock_doc.exists = True
+  mock_doc.to_dict.return_value = {
+      "quizDate": "2026-08-28",
+      "status": "empty_final",
+      "fetchAttempts": 4,
+      "questions": [],
+      "summary": {"total": 0, "approved": 0, "failed": 0},
+  }
+
+  mock_db = MagicMock()
+  mock_db.collection.return_value.document.return_value.get.return_value = mock_doc
+
+  with patch("main.get_db", return_value=mock_db):
+    response = client.get("/reports/2026-08-28")
+    assert response.status_code == 200
+    assert "The team has been alerted" in response.text
+
+
+def test_dashboard_no_quiz_badge(client):
+  """GET / shows a neutral NO QUIZ badge, not PASS, for a zero-question day."""
+  mock_doc = MagicMock()
+  mock_doc.to_dict.return_value = {
+      "quizDate": "2026-08-28",
+      "status": "empty_final",
+      "summary": {"total": 0, "approved": 0, "failed": 0},
+  }
+
+  mock_db = MagicMock()
+  mock_db.collection.return_value.order_by.return_value.limit.return_value.stream.return_value = [mock_doc]
+
+  with patch("main.get_db", return_value=mock_db):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert '<span class="badge neutral">NO QUIZ</span>' in response.text
+    assert '<span class="badge good">PASS</span>' not in response.text
+
+
 def test_report_detail_not_found(client):
   """GET /reports/{date} returns 404 when report does not exist."""
   mock_doc = MagicMock()
@@ -82,3 +145,23 @@ def test_trigger_audit_unauthorized_without_token(client):
   with patch.dict("os.environ", {"SKIP_AUTH": "false"}):
     response = client.post("/trigger-audit")
     assert response.status_code == 401
+
+
+def test_trigger_audit_skips_when_already_complete(client):
+  """POST /trigger-audit is a no-op once today's audit is resolved, so the
+  hourly retry schedule doesn't re-run the pipeline (or spend Gemini/search
+  budget) after a real report — or a final no-quiz alert — is saved."""
+  mock_doc = MagicMock()
+  mock_doc.exists = True
+  mock_doc.to_dict.return_value = {"status": "complete"}
+
+  mock_db = MagicMock()
+  mock_db.collection.return_value.document.return_value.get.return_value = mock_doc
+
+  with patch.dict("os.environ", {"SKIP_AUTH": "true"}):
+    with patch("main.get_db", return_value=mock_db):
+      with patch("main.Runner") as mock_runner_cls:
+        response = client.post("/trigger-audit")
+        assert response.status_code == 200
+        assert response.json()["status"] == "skipped"
+        mock_runner_cls.assert_not_called()

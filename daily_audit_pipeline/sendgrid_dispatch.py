@@ -468,6 +468,118 @@ async def send_audit_report(
 
 
 
+async def send_no_quiz_alert(
+    recipient_email: str,
+    quiz_date: str,
+    attempts: int,
+    dry_run: bool = False,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    base_delay: float = DEFAULT_BASE_DELAY,
+    backoff_factor: float = DEFAULT_BACKOFF_FACTOR,
+    max_delay: float = DEFAULT_MAX_DELAY,
+    client: Optional[Any] = None,
+    sleep_fn: Optional[Callable[[float], Any]] = None,
+    api_key: Optional[str] = None,
+) -> dict:
+  """Send an alert when no quiz was available after repeated hourly checks.
+
+  Args:
+    recipient_email: Email address to send to
+    quiz_date: Date the auditor was checking for (e.g., "2026-08-28")
+    attempts: Number of hourly fetch attempts made before giving up
+    dry_run: If True, don't actually send the email (for testing)
+    max_retries: Maximum number of retry attempts (default: 5)
+    base_delay: Initial retry backoff interval in seconds (default: 1.0)
+    backoff_factor: Exponential multiplier (default: 2.0 -> 1s, 2s, 4s, 8s, 16s)
+    max_delay: Maximum delay cap in seconds (default: 32.0)
+    client: Optional pre-configured SendGrid client instance (for testing)
+    sleep_fn: Optional custom sleep callable (for testing)
+    api_key: Optional API key override
+
+  Returns:
+    Dictionary with send status, status_code, attempts, retries, and email metadata
+  """
+  html_content = _build_no_quiz_html(quiz_date, attempts)
+  subject = f"Quizzy Auditor — No quiz found for {quiz_date}"
+
+  if dry_run:
+    return {
+        "status": "dry_run",
+        "recipient": recipient_email,
+        "quiz_date": quiz_date,
+        "fetch_attempts": attempts,
+        "attempts": 0,
+        "retries": 0,
+        "retry_history": [],
+        "html_preview": html_content[:500] + "...",
+    }
+
+  mail = Mail(
+      from_email=From("auditor@quizzy-news.internal"),
+      to_emails=To(recipient_email),
+      subject=subject,
+      html_content=Content("text/html", html_content),
+  )
+
+  retry_config = RetryConfig(
+      max_retries=max_retries,
+      base_delay=base_delay,
+      backoff_factor=backoff_factor,
+      max_delay=max_delay,
+  )
+
+  dispatcher = SendGridDispatcher(
+      api_key=api_key,
+      retry_config=retry_config,
+      client=client,
+      sleep_fn=sleep_fn,
+  )
+
+  metadata = {"quiz_date": quiz_date, "fetch_attempts": attempts}
+
+  return await dispatcher.dispatch_mail_with_retry(
+      mail=mail,
+      recipient_email=recipient_email,
+      subject=subject,
+      metadata=metadata,
+  )
+
+
+def _build_no_quiz_html(quiz_date: str, attempts: int) -> str:
+  """Build HTML email alert for when no quiz was available to audit."""
+  return f"""
+  <html>
+    <head>
+      <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto; margin: 0; padding: 20px; background: #f5f5f5; }}
+        .container {{ background: white; max-width: 600px; margin: 0 auto; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
+        .header {{ padding: 24px; background: linear-gradient(135deg, #e95750 0%, #c23f39 100%); color: white; border-radius: 8px 8px 0 0; }}
+        .content {{ padding: 24px; font-size: 14px; color: #333; line-height: 1.6; }}
+        .footer {{ padding: 16px; border-top: 1px solid #eee; font-size: 12px; color: #666; text-align: center; }}
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1 style="margin: 0; font-size: 22px;">No Quiz Available</h1>
+          <p style="margin: 8px 0 0 0; opacity: 0.9;">{quiz_date}</p>
+        </div>
+        <div class="content">
+          <p>The auditor checked for today's quiz {attempts} times, roughly
+          an hour apart, and never received any questions to review from
+          quizzy-news-service.</p>
+          <p>No audit was performed for {quiz_date}. Please check whether
+          the quiz service published today's quiz.</p>
+        </div>
+        <div class="footer">
+          <p>This is an automated alert from Quizzy Auditor running on Google ADK.</p>
+        </div>
+      </div>
+    </body>
+  </html>
+  """
+
+
 def _build_html_report(
     quiz_date: str, total: int, approved: int, failed_questions: list[dict]
 ) -> str:
