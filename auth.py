@@ -83,12 +83,25 @@ def get_admin_email(request: Request) -> Optional[str]:
   cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
   if not cookie_value:
     return None
-  return verify_session_cookie(cookie_value)
+  try:
+    return verify_session_cookie(cookie_value)
+  except RuntimeError:
+    # SESSION_SECRET unconfigured. This function is used un-gated on public
+    # pages to decide whether to show an admin nav link, so it must fail
+    # open (display-only) rather than 500ing public traffic. require_admin
+    # below still fails loud for a genuine misconfiguration by checking
+    # get_session_secret() directly, independent of this catch.
+    return None
 
 
 def require_admin(request: Request) -> str:
   """FastAPI dependency: raises 401 if there's no valid admin session,
   otherwise returns the verified email."""
+  get_session_secret()  # Raises RuntimeError (-> 500) if SESSION_SECRET is
+                         # unset. Checked directly so a real deployment
+                         # misconfiguration still fails loud here, even
+                         # though get_admin_email fails open (returns None)
+                         # for its own public-page callers.
   email = get_admin_email(request)
   if email is None:
     raise HTTPException(status_code=401, detail="Admin sign-in required")

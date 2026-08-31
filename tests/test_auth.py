@@ -103,3 +103,18 @@ class TestGetAdminEmail:
     request = MagicMock()
     request.cookies = {}
     assert get_admin_email(request) is None
+
+  def test_returns_none_without_raising_when_secret_unset(self, monkeypatch):
+    monkeypatch.delenv("SESSION_SECRET", raising=False)
+    request = MagicMock()
+    request.cookies = {SESSION_COOKIE_NAME: "some-stale-or-garbage-cookie-value"}
+    assert get_admin_email(request) is None
+
+
+class TestRequireAdminFailsLoudOnMissingSecret:
+  def test_require_admin_raises_when_secret_unset(self, monkeypatch):
+    monkeypatch.delenv("SESSION_SECRET", raising=False)
+    request = MagicMock()
+    request.cookies = {SESSION_COOKIE_NAME: "some-stale-or-garbage-cookie-value"}
+    with pytest.raises(RuntimeError):
+      require_admin(request)
