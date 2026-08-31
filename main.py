@@ -308,7 +308,7 @@ def verify_cloud_scheduler_request(request: Request) -> bool:
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard():
+async def dashboard(request: Request):
   """Render the audit dashboard homepage."""
   audit_list = []
   try:
@@ -361,6 +361,33 @@ async def dashboard():
       "automatically.</div>"
   )
 
+  admin_email = auth.get_admin_email(request)
+  oauth_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+  if admin_email:
+    admin_nav = (
+        f'<div style="text-align: center; margin-top: 8px; font-size: 13px;">'
+        f'<a href="/admin">Admin</a> · '
+        f'<a href="#" onclick="fetch(\'/admin/logout\', {{method: \'POST\'}}).then(() => location.reload()); return false;">Sign out ({admin_email})</a>'
+        f'</div>'
+    )
+  else:
+    admin_nav = f"""
+    <div style="text-align: center; margin-top: 8px;">
+      <div id="g_id_onload" data-client_id="{oauth_client_id}" data-callback="handleGoogleSignIn"></div>
+      <div class="g_id_signin" style="display: inline-block;" data-type="standard"></div>
+    </div>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script>
+      function handleGoogleSignIn(response) {{
+        fetch('/admin/login', {{
+          method: 'POST',
+          headers: {{'Content-Type': 'application/json'}},
+          body: JSON.stringify({{credential: response.credential}})
+        }}).then(() => location.reload());
+      }}
+    </script>
+    """
+
   return f"""
   <!DOCTYPE html>
   <html>
@@ -378,6 +405,7 @@ async def dashboard():
         <h1>Quizzy Auditor</h1>
         <p>Daily QC for quizzy.news — {len(audit_list)} audit{"" if len(audit_list) == 1 else "s"} recorded</p>
       </div>
+      {admin_nav}
       <div class="container">
         <div class="stats">
           <div class="stat-card">
@@ -480,21 +508,36 @@ async def report_detail(date: str):
       stat_approved_class = ""
       stat_failed_class = ""
     else:
-      failed_questions = [r for r in audit_results if not r.get("approved", False)]
-      fail_cards = "".join(
+      def render_sources(sources_checked):
+        if not sources_checked:
+          return ""
+        items = "".join(
+            f'<li>{s["url"]}{"" if s.get("verified") else " — ⚠ unverified"}</li>'
+            for s in sources_checked
+        )
+        return (
+            '<div style="margin-top: 6px; font-size: 12px; color: var(--muted);">'
+            f'<strong>Sources checked:</strong><ul style="margin: 4px 0 0 18px;">{items}</ul></div>'
+        )
+
+      question_cards = "".join(
           f"""
-          <div class="fail-card">
-            <div class="q">{r.get('question', 'N/A')}</div>
-            <div class="why">{r.get('review') or 'Failed'}</div>
+          <div class="fail-card" style="background: var(--card); box-shadow: 0 4px 0 {'var(--good-shadow)' if r.get('approved') else 'var(--bad-shadow)'};">
+            <div class="q">{r.get('question', 'N/A')} {'✓' if r.get('approved') else '✗'}</div>
+            <div class="why">{r.get('review') or ('Approved' if r.get('approved') else 'Failed')}</div>
+            <div style="margin-top: 8px; font-size: 13px;">
+              <strong>Choices:</strong> {', '.join(r.get('choices', []))}
+              &nbsp;·&nbsp;
+              <strong>Answer matches a choice:</strong> {'✓' if r.get('answer_matches_choice') else '✗'}
+            </div>
+            {render_sources(r.get('sources_checked', []))}
           </div>
           """
-          for r in failed_questions
+          for r in audit_results
       )
       failed_section = (
-          f'<h2 style="margin-top: 32px; margin-bottom: 4px;">Failed Questions</h2>'
-          f'<div class="card-list">{fail_cards}</div>'
-          if fail_cards
-          else '<div class="empty">All questions passed — nothing to review.</div>'
+          f'<h2 style="margin-top: 32px; margin-bottom: 4px;">Questions</h2>'
+          f'<div class="card-list">{question_cards}</div>'
       )
       stat_approved_class = "good"
       stat_failed_class = "bad"

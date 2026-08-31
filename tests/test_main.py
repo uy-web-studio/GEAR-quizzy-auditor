@@ -354,3 +354,69 @@ def test_admin_dry_run_today_returns_results_without_saving(client, monkeypatch)
           # Dry run never writes to audits/{date}
           for call in mock_db.collection.call_args_list:
             assert call.args[0] != "audits"
+
+
+def test_dashboard_shows_sign_in_when_anonymous(client):
+  mock_db = MagicMock()
+  mock_db.collection.return_value.order_by.return_value.limit.return_value.stream.return_value = []
+
+  with patch("main.get_db", return_value=mock_db):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "g_id_signin" in response.text
+    assert 'href="/admin"' not in response.text
+
+
+def test_dashboard_shows_admin_nav_when_authenticated(client, monkeypatch):
+  monkeypatch.setenv("SESSION_SECRET", "test-secret")
+  mock_db = MagicMock()
+  mock_db.collection.return_value.order_by.return_value.limit.return_value.stream.return_value = []
+
+  with patch("main.get_db", return_value=mock_db):
+    response = client.get("/", headers=_admin_cookie_header())
+    assert response.status_code == 200
+    assert 'href="/admin"' in response.text
+
+
+def test_report_detail_shows_all_questions_with_choices_no_answer(client):
+  mock_doc = MagicMock()
+  mock_doc.exists = True
+  mock_doc.to_dict.return_value = {
+      "quizDate": "2026-08-30",
+      "status": "complete",
+      "summary": {"total": 2, "approved": 1, "failed": 1},
+      "questions": [
+          {
+              "question": "What is the capital of France?",
+              "choices": ["Paris", "London", "Berlin"],
+              "answer_matches_choice": True,
+              "approved": True,
+              "review": "Answer matches a choice.",
+              "sources_checked": [{"url": "https://example.com/paris", "verified": True}],
+          },
+          {
+              "question": "According to the article, what happened?",
+              "choices": ["X", "Y", "Z"],
+              "answer_matches_choice": False,
+              "approved": False,
+              "review": "Rule 1 failure: meta-referential phrasing.",
+              "sources_checked": [{"url": "https://fabricated.example/x", "verified": False}],
+          },
+      ],
+  }
+  mock_db = MagicMock()
+  mock_db.collection.return_value.document.return_value.get.return_value = mock_doc
+
+  with patch("main.get_db", return_value=mock_db):
+    response = client.get("/reports/2026-08-30")
+    assert response.status_code == 200
+    # Both questions shown, not just the failed one
+    assert "What is the capital of France?" in response.text
+    assert "According to the article, what happened?" in response.text
+    # Choices shown
+    assert "Paris" in response.text
+    assert "London" in response.text
+    # Sources and their verification status shown
+    assert "https://example.com/paris" in response.text
+    assert "https://fabricated.example/x" in response.text
+    assert "unverified" in response.text
