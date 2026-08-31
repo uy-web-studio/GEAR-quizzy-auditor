@@ -1620,7 +1620,7 @@ Expected: All PASS
 - [ ] **Step 5: Run the full suite**
 
 Run: `.venv/bin/python3 -m pytest -q tests/`
-Expected: `86 passed` (73 + 13 new)
+Expected: `87 passed` (73 + 14 new)
 
 - [ ] **Step 6: Commit**
 
@@ -1728,7 +1728,7 @@ Expected: PASS
 - [ ] **Step 6: Run the full suite**
 
 Run: `.venv/bin/python3 -m pytest -q tests/`
-Expected: `89 passed`
+Expected: `90 passed`
 
 - [ ] **Step 7: Commit**
 
@@ -1946,7 +1946,7 @@ Expected: PASS
 
 Run: `.venv/bin/pip install python-multipart`
 Run: `.venv/bin/python3 -m pytest -q tests/`
-Expected: `93 passed`
+Expected: `94 passed`
 
 - [ ] **Step 7: Commit**
 
@@ -2155,7 +2155,7 @@ Expected: PASS
 - [ ] **Step 6: Run the full suite**
 
 Run: `.venv/bin/python3 -m pytest -q tests/`
-Expected: `94 passed`
+Expected: `95 passed`
 
 - [ ] **Step 7: Commit**
 
@@ -2350,7 +2350,7 @@ Expected: PASS
 - [ ] **Step 6: Run the full suite**
 
 Run: `.venv/bin/python3 -m pytest -q tests/`
-Expected: `97 passed`. If `test_dashboard_rendering` (existing, pre-this-plan) fails because it now requires a `request` fixture implicitly via `TestClient` (it shouldn't — `TestClient.get("/")` supplies a real `Request` automatically), investigate; the `dashboard()` signature change only adds a parameter FastAPI injects itself, it doesn't change the call contract for `TestClient`.
+Expected: `98 passed`. If `test_dashboard_rendering` (existing, pre-this-plan) fails because it now requires a `request` fixture implicitly via `TestClient` (it shouldn't — `TestClient.get("/")` supplies a real `Request` automatically), investigate; the `dashboard()` signature change only adds a parameter FastAPI injects itself, it doesn't change the call contract for `TestClient`.
 
 - [ ] **Step 7: Commit**
 

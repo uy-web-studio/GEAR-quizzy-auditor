@@ -1,5 +1,11 @@
-from .agent import auditor_agent, root_agent
+from .agent import DEFAULT_AUDITOR_INSTRUCTION, build_auditor_agent, build_daily_pipeline
 from .reporter import ReporterAgent
 from .schemas import QuestionAudit
 
-__all__ = ["root_agent", "auditor_agent", "ReporterAgent", "QuestionAudit"]
+__all__ = [
+    "DEFAULT_AUDITOR_INSTRUCTION",
+    "build_auditor_agent",
+    "build_daily_pipeline",
+    "ReporterAgent",
+    "QuestionAudit",
+]

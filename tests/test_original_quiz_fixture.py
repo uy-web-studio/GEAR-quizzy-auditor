@@ -80,9 +80,10 @@ class TestOriginalQuizFixture:
     assert q["answer"] in q["choices"]
     audit = QuestionAudit(
       question=q["question"],
+      choices=q["choices"],
+      answer_matches_choice=q["answer"] in q["choices"],
       approved=True,
-      review="",
+      review="Answer matches a choice.",
     )
     assert audit.approved is True
-    assert audit.review == ""
-    assert audit.question == q["question"]
+    assert audit.answer_matches_choice is True

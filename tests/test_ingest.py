@@ -56,3 +56,40 @@ class TestFetcherAgentSchema:
             assert key in q
         assert isinstance(q["choices"], list)
         assert "url" in q["source"]
+
+
+class TestFetchQuiz:
+  """Verify fetch_quiz() parses the endpoint's response into the data dict."""
+
+  @pytest.mark.anyio
+  async def test_fetch_quiz_returns_data_object(self):
+    import httpx
+    from unittest.mock import patch, AsyncMock
+
+    from daily_audit_pipeline.fetcher import fetch_quiz
+
+    sample_response = {
+        "status": 200,
+        "data": {
+            "quizDate": "2026-08-30",
+            "quiz": [
+                {
+                    "question": "Sample question?",
+                    "choices": ["A", "B", "C"],
+                    "answer": "A",
+                    "source": {"url": "https://example.com/article"},
+                }
+            ],
+        },
+    }
+    mock_response = httpx.Response(
+        200, json=sample_response, request=httpx.Request("GET", "https://example.com")
+    )
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+      mock_get.return_value = mock_response
+      result = await fetch_quiz()
+
+    assert result == sample_response["data"]
+    assert result["quizDate"] == "2026-08-30"
+    assert len(result["quiz"]) == 1

@@ -4,7 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from google.adk.agents.invocation_context import InvocationContext
+from google.adk.events import Event as AdkEvent
 from google.adk.sessions.session import Session
+from google.genai import types as genai_types
 from daily_audit_pipeline.reporter import ReporterAgent
 from daily_audit_pipeline.schemas import QuestionAudit
 
@@ -20,11 +22,12 @@ class TestReporterAgent:
     session = MagicMock(spec=Session)
     session.state = {
         "audit_results": [
-            {"question": "Q1", "approved": True, "review": ""},
-            {"question": "Q2", "approved": True, "review": ""},
+            {"question": "Q1", "choices": ["A", "B", "C"], "answer_matches_choice": True, "approved": True, "review": "Looks good."},
+            {"question": "Q2", "choices": ["A", "B", "C"], "answer_matches_choice": True, "approved": True, "review": "Looks good."},
         ]
     }
-    
+    session.events = []
+
     ctx = MagicMock(spec=InvocationContext)
     ctx.session = session
     ctx.invocation_id = "test-inv-1"
@@ -58,11 +61,12 @@ class TestReporterAgent:
     session = MagicMock(spec=Session)
     session.state = {
         "audit_results": [
-            QuestionAudit(question="Q1", approved=True, review=""),
-            QuestionAudit(question="Q2", approved=False, review="Rule 1 failure"),
+            QuestionAudit(question="Q1", choices=["A", "B", "C"], answer_matches_choice=True, approved=True, review="Looks good."),
+            QuestionAudit(question="Q2", choices=["X", "Y", "Z"], answer_matches_choice=False, approved=False, review="Rule 1 failure"),
         ]
     }
-    
+    session.events = []
+
     ctx = MagicMock(spec=InvocationContext)
     ctx.session = session
     ctx.invocation_id = "test-inv-2"
@@ -100,6 +104,7 @@ class TestReporterAgent:
 
     session = MagicMock(spec=Session)
     session.state = {"audit_results": []}
+    session.events = []
 
     ctx = MagicMock(spec=InvocationContext)
     ctx.session = session
@@ -132,6 +137,7 @@ class TestReporterAgent:
 
     session = MagicMock(spec=Session)
     session.state = {"audit_results": []}
+    session.events = []
 
     ctx = MagicMock(spec=InvocationContext)
     ctx.session = session
@@ -165,3 +171,65 @@ class TestReporterAgent:
         summary_text = events[0].content.parts[0].text
         assert "Fetch attempts: 4/4" in summary_text
         assert "alert sent" in summary_text
+
+  @pytest.mark.anyio
+  async def test_reporter_agent_persists_choices_and_verified_sources(self):
+    """Persisted questions include choices, answer_matches_choice, and
+    sources_checked cross-validated against real grounding activity from
+    ctx.session.events."""
+    agent = ReporterAgent(name="reporter_agent")
+
+    session = MagicMock(spec=Session)
+    session.state = {
+        "audit_results": [
+            {
+                "question": "What is the capital of France?",
+                "choices": ["Paris", "London", "Berlin"],
+                "answer_matches_choice": True,
+                "approved": True,
+                "review": "Answer matches a choice.",
+                "sources_checked": ["https://example.com/paris-article"],
+            },
+        ]
+    }
+    grounding_event = AdkEvent(
+        invocation_id="inv-x",
+        author="auditor_agent",
+        branch=None,
+        grounding_metadata=genai_types.GroundingMetadata(
+            web_search_queries=["capital of France"],
+            grounding_chunks=[
+                genai_types.GroundingChunk(
+                    web=genai_types.GroundingChunkWeb(
+                        uri="https://example.com/paris-article",
+                        title="Paris facts",
+                        domain="example.com",
+                    )
+                )
+            ],
+        ),
+        content=genai_types.Content(role="model", parts=[genai_types.Part.from_text(text="...")]),
+    )
+    session.events = [grounding_event]
+
+    ctx = MagicMock(spec=InvocationContext)
+    ctx.session = session
+    ctx.invocation_id = "test-inv-grounding"
+    ctx.branch = "main"
+
+    with patch("daily_audit_pipeline.reporter.send_audit_report", new_callable=AsyncMock):
+      with patch("daily_audit_pipeline.reporter.firestore.Client") as mock_firestore:
+        mock_db = MagicMock()
+        mock_firestore.return_value = mock_db
+
+        async for _ in agent._run_async_impl(ctx):
+          pass
+
+        saved_doc = mock_db.collection.return_value.document.return_value.set.call_args.args[0]
+        question = saved_doc["questions"][0]
+        assert question["choices"] == ["Paris", "London", "Berlin"]
+        assert question["answer_matches_choice"] is True
+        assert question["sources_checked"] == [
+            {"url": "https://example.com/paris-article", "verified": True}
+        ]
+        assert saved_doc["groundingActivity"]["searchQueries"] == ["capital of France"]

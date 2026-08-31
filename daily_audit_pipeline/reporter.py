@@ -9,12 +9,29 @@ from google.cloud import firestore
 from google.genai import types
 from typing_extensions import override
 
+from .grounding import cross_validate_sources, extract_grounding_activity
 from .sendgrid_dispatch import send_audit_report, send_no_quiz_alert
 from .schemas import QuestionAudit
 
 # How many hourly checks the scheduler will make for a day's quiz before
 # ReporterAgent gives up and alerts, per SPEC.md's no-quiz retry policy.
 MAX_FETCH_ATTEMPTS = 4
+
+
+def save_audit_report(db, quiz_date: str, report_doc: dict) -> str:
+  """Write a report doc to audits/{quiz_date}.
+
+  Module-level (not a ReporterAgent method) so Phase 2's retroactive
+  re-audit endpoint can reuse the exact same save path.
+  """
+  if db is None:
+    return "skipped (no Firestore client)"
+  try:
+    db.collection("audits").document(quiz_date).set(report_doc)
+    return "saved"
+  except Exception as e:
+    print(f"Warning: Could not save report to Firestore: {e}")
+    return f"skipped ({e})"
 
 
 class ReporterAgent(BaseAgent):
@@ -43,6 +60,7 @@ class ReporterAgent(BaseAgent):
       ]
 
     total_questions = len(audit_results)
+    grounding_activity = extract_grounding_activity(session.events if session else [])
 
     db = None
     try:
@@ -53,7 +71,7 @@ class ReporterAgent(BaseAgent):
 
     if total_questions > 0:
       summary_text = await self._report_audited(
-          db, quiz_date, recipient_email, audit_results
+          db, quiz_date, recipient_email, audit_results, grounding_activity
       )
     else:
       summary_text = await self._report_no_quiz(db, quiz_date, recipient_email)
@@ -69,7 +87,7 @@ class ReporterAgent(BaseAgent):
     )
 
   async def _report_audited(
-      self, db, quiz_date: str, recipient_email: str, audit_results
+      self, db, quiz_date: str, recipient_email: str, audit_results, grounding_activity: dict
   ) -> str:
     """Save a normal report and email only if any question failed."""
     total_questions = len(audit_results)
@@ -80,7 +98,14 @@ class ReporterAgent(BaseAgent):
         if not q.approved
     ]
     questions_data = [
-        {"question": q.question, "approved": q.approved, "review": q.review if q.review else ""}
+        {
+            "question": q.question,
+            "choices": q.choices,
+            "answer_matches_choice": q.answer_matches_choice,
+            "approved": q.approved,
+            "review": q.review if q.review else "",
+            "sources_checked": cross_validate_sources(q.sources_checked, grounding_activity),
+        }
         for q in audit_results
     ]
 
@@ -90,13 +115,14 @@ class ReporterAgent(BaseAgent):
         "model": "gemini-3.7-flash",
         "status": "complete",
         "questions": questions_data,
+        "groundingActivity": grounding_activity,
         "summary": {
             "total": total_questions,
             "approved": approved_count,
             "failed": len(failed_questions),
         },
     }
-    firestore_status = self._save_report(db, quiz_date, report_doc)
+    firestore_status = save_audit_report(db, quiz_date, report_doc)
 
     if failed_questions:
       dry_run = os.environ.get("SENDGRID_DRY_RUN", "false").lower() in ("true", "1", "yes")
@@ -149,7 +175,7 @@ class ReporterAgent(BaseAgent):
         "questions": [],
         "summary": {"total": 0, "approved": 0, "failed": 0},
     }
-    firestore_status = self._save_report(db, quiz_date, report_doc)
+    firestore_status = save_audit_report(db, quiz_date, report_doc)
 
     if final_attempt:
       dry_run = os.environ.get("SENDGRID_DRY_RUN", "false").lower() in ("true", "1", "yes")
@@ -176,14 +202,3 @@ class ReporterAgent(BaseAgent):
         f"- Fetch attempts: {attempts}/{MAX_FETCH_ATTEMPTS}\n"
         f"\n{status_text}"
     )
-
-  @staticmethod
-  def _save_report(db, quiz_date: str, report_doc: dict) -> str:
-    if db is None:
-      return "skipped (no Firestore client)"
-    try:
-      db.collection("audits").document(quiz_date).set(report_doc)
-      return "saved"
-    except Exception as e:
-      print(f"Warning: Could not save report to Firestore: {e}")
-      return f"skipped ({e})"

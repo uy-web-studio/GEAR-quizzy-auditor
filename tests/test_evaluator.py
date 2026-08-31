@@ -16,15 +16,25 @@ class TestQuestionAudit:
 
   def test_question_audit_approved(self):
     """Test creating an approved audit result."""
-    audit = QuestionAudit(question="What is 2+2?", approved=True, review="")
+    audit = QuestionAudit(
+        question="What is 2+2?",
+        choices=["4", "3", "5"],
+        answer_matches_choice=True,
+        approved=True,
+        review="Answer matches a choice.",
+    )
     assert audit.question == "What is 2+2?"
+    assert audit.choices == ["4", "3", "5"]
+    assert audit.answer_matches_choice is True
     assert audit.approved is True
-    assert audit.review == ""
+    assert audit.review == "Answer matches a choice."
 
   def test_question_audit_failed(self):
     """Test creating a failed audit result."""
     audit = QuestionAudit(
         question="What is the capital of France?",
+        choices=["Paris", "London", "Berlin"],
+        answer_matches_choice=True,
         approved=False,
         review="Rule 1 (Phrasing): Meta-referential phrasing detected.",
     )
@@ -35,13 +45,20 @@ class TestQuestionAudit:
   def test_question_audit_serialization(self):
     """Test QuestionAudit can be serialized to dict."""
     audit = QuestionAudit(
-        question="Test question", approved=True, review=""
+        question="Test question",
+        choices=["A", "B", "C"],
+        answer_matches_choice=True,
+        approved=True,
+        review="Looks good.",
     )
     data = audit.model_dump()
     assert data == {
         "question": "Test question",
+        "choices": ["A", "B", "C"],
+        "answer_matches_choice": True,
         "approved": True,
-        "review": "",
+        "review": "Looks good.",
+        "sources_checked": [],
     }
 
 
@@ -133,13 +150,17 @@ class TestQuizAuditFlow:
     audit_results = [
         QuestionAudit(
             question="Q1: What is 2+2?",
+            choices=["4", "3", "5"],
+            answer_matches_choice=True,
             approved=True,
-            review="",
+            review="Answer matches a choice.",
         ),
         QuestionAudit(
             question="Q2: What is the capital of France?",
+            choices=["Paris", "London", "Berlin"],
+            answer_matches_choice=True,
             approved=True,
-            review="",
+            review="Answer matches a choice.",
         ),
     ]
 
@@ -156,18 +177,24 @@ class TestQuizAuditFlow:
     audit_results = [
         QuestionAudit(
             question="Q1: What is 2+2?",
+            choices=["4", "3", "5"],
+            answer_matches_choice=True,
             approved=True,
-            review="",
+            review="Answer matches a choice.",
         ),
         QuestionAudit(
             question="Q2: According to the article, what happened?",
+            choices=["A", "B", "C"],
+            answer_matches_choice=True,
             approved=False,
             review="Rule 1 (Phrasing): Meta-referential phrasing detected.",
         ),
         QuestionAudit(
             question="Q3: What is the capital of France?",
+            choices=["Paris", "London", "Berlin"],
+            answer_matches_choice=True,
             approved=True,
-            review="",
+            review="Answer matches a choice.",
         ),
     ]
 
@@ -187,11 +214,15 @@ class TestQuizAuditFlow:
     audit_results = [
         QuestionAudit(
             question="Q1: According to the source...",
+            choices=["A", "B", "C"],
+            answer_matches_choice=True,
             approved=False,
             review="Rule 1 (Phrasing): Meta-referential phrasing detected.",
         ),
         QuestionAudit(
             question="Q2: What is X?",
+            choices=["Y", "Z", "W"],
+            answer_matches_choice=False,
             approved=False,
             review="Rule 2 (Answer/Choice Integrity): Answer mismatch.",
         ),

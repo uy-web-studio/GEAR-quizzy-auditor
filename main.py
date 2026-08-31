@@ -6,20 +6,27 @@ This FastAPI application serves as the Cloud Run service that:
 3. Provides dashboard endpoints for viewing audit history
 """
 
+import json
 import os
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from google.auth.transport import requests
 from google.cloud import firestore
 from google.oauth2 import id_token
 from google.genai import types
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+from pydantic import BaseModel
 
-from daily_audit_pipeline.agent import root_agent
+import auth
+from daily_audit_pipeline.agent import DEFAULT_AUDITOR_INSTRUCTION, build_auditor_agent, build_daily_pipeline
+from daily_audit_pipeline.fetcher import fetch_quiz
+from daily_audit_pipeline.grounding import cross_validate_sources, extract_grounding_activity
+from daily_audit_pipeline.revisions import log_revision
+from daily_audit_pipeline.schemas import QuestionAudit
 
 app = FastAPI(
     title="Quizzy Auditor",
@@ -105,6 +112,175 @@ def get_db():
   return firestore.Client(project=project_id) if project_id else firestore.Client()
 
 
+def get_auditor_instruction(db) -> str:
+  """Read the currently saved auditor rubric, falling back to the default."""
+  doc = db.collection("config").document("auditor_rules").get()
+  if doc.exists:
+    data = doc.to_dict() or {}
+    instruction = data.get("instruction")
+    if instruction:
+      return instruction
+  return DEFAULT_AUDITOR_INSTRUCTION
+
+
+async def run_dry_run(instruction: str, target: str) -> dict:
+  """Run the auditor step only (no Fetcher, no Reporter) against either a
+  fresh live fetch ("today") or — in Phase 2 — a stored quizzes/{date} doc.
+  No Firestore write to audits/{date}, no email. See spec §5."""
+  try:
+    if target == "today":
+      quiz_data = await fetch_quiz()
+    else:
+      return {"error": f"Historical dry-run targets aren't available yet (target={target})"}
+
+    quiz_json = json.dumps({"data": quiz_data})
+
+    session_service = InMemorySessionService()
+    session = await session_service.create_session(app_name="dry_run", user_id="admin")
+    runner = Runner(
+        agent=build_auditor_agent(instruction),
+        app_name="dry_run",
+        session_service=session_service,
+    )
+    events = []
+    async for event in runner.run_async(
+        user_id="admin",
+        session_id=session.id,
+        new_message=types.Content(role="user", parts=[types.Part.from_text(text=quiz_json)]),
+    ):
+      events.append(event)
+
+    final_session = await session_service.get_session(
+        app_name="dry_run", user_id="admin", session_id=session.id
+    )
+    audit_results_raw = (final_session.state or {}).get("audit_results", [])
+    audit_results = [QuestionAudit(**r) if isinstance(r, dict) else r for r in audit_results_raw]
+
+    grounding_activity = extract_grounding_activity(events)
+    questions = [
+        {
+            "question": q.question,
+            "choices": q.choices,
+            "answer_matches_choice": q.answer_matches_choice,
+            "approved": q.approved,
+            "review": q.review,
+            "sources_checked": cross_validate_sources(q.sources_checked, grounding_activity),
+        }
+        for q in audit_results
+    ]
+    approved_count = sum(1 for q in questions if q["approved"])
+
+    return {
+        "questions": questions,
+        "total": len(questions),
+        "approved": approved_count,
+        "groundingActivity": grounding_activity,
+    }
+  except Exception as e:
+    return {"error": str(e)}
+
+
+def _render_admin_page(instruction: str, dry_run_result: Optional[dict], saved: bool) -> str:
+  saved_banner = (
+      '<div class="empty" style="color: var(--good-shadow); background: var(--good-tint); border-radius: 10px; padding: 12px;">Rules saved.</div>'
+      if saved else ""
+  )
+
+  dry_run_html = ""
+  if dry_run_result is not None:
+    if dry_run_result.get("error"):
+      dry_run_html = f'<div class="empty" style="color: var(--bad-shadow); background: var(--bad-tint); border-radius: 10px; padding: 12px;">Dry run failed: {dry_run_result["error"]}</div>'
+    else:
+      cards = "".join(
+          f"""
+          <div class="fail-card" style="background: var(--card); box-shadow: 0 4px 0 {'var(--good-shadow)' if q['approved'] else 'var(--bad-shadow)'};">
+            <div class="q">{q['question']} — {'PASS' if q['approved'] else 'FAIL'}</div>
+            <div class="why">{q['review']}</div>
+          </div>
+          """
+          for q in dry_run_result["questions"]
+      )
+      dry_run_html = f"""
+      <h2 style="margin-top: 24px;">Dry Run Results ({dry_run_result['approved']}/{dry_run_result['total']} approved)</h2>
+      <div class="card-list">{cards}</div>
+      """
+
+  return f"""
+  <!DOCTYPE html>
+  <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Quizzy Auditor — Edit Rules</title>
+{FONT_LINKS}
+      <style>
+{SHARED_STYLES}
+        textarea {{ width: 100%; min-height: 320px; font-family: monospace; font-size: 13px; padding: 12px; border-radius: 10px; border: 1px solid var(--line); box-sizing: border-box; }}
+        .btn {{ display: inline-block; padding: 10px 20px; border-radius: 8px; border: none; background: var(--brand); color: white; font-weight: 700; font-size: 14px; cursor: pointer; box-shadow: 0 4px 0 var(--brand-shadow); }}
+      </style>
+    </head>
+    <body>
+      <div class="page-header container">
+        <a href="/" class="back-link">← All audits</a>
+        <h1>Edit Auditor Rules</h1>
+      </div>
+      <div class="container">
+        {saved_banner}
+        <form method="POST" action="/admin/rules">
+          <textarea name="instruction">{instruction}</textarea>
+          <div style="margin-top: 12px;">
+            <button class="btn" type="submit" name="action" value="save">Save</button>
+            <button class="btn" type="submit" name="action" value="dry_run" style="background: var(--good); box-shadow: 0 4px 0 var(--good-shadow);">Dry Run (today's live quiz)</button>
+          </div>
+          <input type="hidden" name="target" value="today">
+        </form>
+        {dry_run_html}
+      </div>
+    </body>
+  </html>
+  """
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_rules_page(admin_email: str = Depends(auth.require_admin)):
+  """Rule editor — auth-gated. Shows the current saved rubric in a textarea."""
+  db = get_db()
+  instruction = get_auditor_instruction(db)
+  return _render_admin_page(instruction=instruction, dry_run_result=None, saved=False)
+
+
+@app.post("/admin/rules", response_class=HTMLResponse)
+async def admin_rules_action(
+    instruction: str = Form(...),
+    action: str = Form(...),
+    target: str = Form("today"),
+    admin_email: str = Depends(auth.require_admin),
+):
+  """Save an edited rubric (action=save), or preview it without saving
+  (action=dry_run)."""
+  db = get_db()
+
+  if action == "dry_run":
+    dry_run_result = await run_dry_run(instruction, target)
+    return _render_admin_page(instruction=instruction, dry_run_result=dry_run_result, saved=False)
+
+  before = get_auditor_instruction(db)
+  db.collection("config").document("auditor_rules").set({
+      "instruction": instruction,
+      "updatedAt": datetime.now().isoformat() + "Z",
+      "updatedBy": admin_email,
+  })
+  log_revision(
+      db,
+      revision_type="rule_change",
+      actor=admin_email,
+      target={"scope": "auditor_rules"},
+      before={"instruction": before},
+      after={"instruction": instruction},
+  )
+  return _render_admin_page(instruction=instruction, dry_run_result=None, saved=True)
+
+
 def verify_cloud_scheduler_request(request: Request) -> bool:
   """Verify that the request came from Cloud Scheduler via OIDC token.
 
@@ -132,7 +308,7 @@ def verify_cloud_scheduler_request(request: Request) -> bool:
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard():
+async def dashboard(request: Request):
   """Render the audit dashboard homepage."""
   audit_list = []
   try:
@@ -185,6 +361,33 @@ async def dashboard():
       "automatically.</div>"
   )
 
+  admin_email = auth.get_admin_email(request)
+  oauth_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+  if admin_email:
+    admin_nav = (
+        f'<div style="text-align: center; margin-top: 8px; font-size: 13px;">'
+        f'<a href="/admin">Admin</a> · '
+        f'<a href="#" onclick="fetch(\'/admin/logout\', {{method: \'POST\'}}).then(() => location.reload()); return false;">Sign out ({admin_email})</a>'
+        f'</div>'
+    )
+  else:
+    admin_nav = f"""
+    <div style="text-align: center; margin-top: 8px;">
+      <div id="g_id_onload" data-client_id="{oauth_client_id}" data-callback="handleGoogleSignIn"></div>
+      <div class="g_id_signin" style="display: inline-block;" data-type="standard"></div>
+    </div>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script>
+      function handleGoogleSignIn(response) {{
+        fetch('/admin/login', {{
+          method: 'POST',
+          headers: {{'Content-Type': 'application/json'}},
+          body: JSON.stringify({{credential: response.credential}})
+        }}).then(() => location.reload());
+      }}
+    </script>
+    """
+
   return f"""
   <!DOCTYPE html>
   <html>
@@ -202,6 +405,7 @@ async def dashboard():
         <h1>Quizzy Auditor</h1>
         <p>Daily QC for quizzy.news — {len(audit_list)} audit{"" if len(audit_list) == 1 else "s"} recorded</p>
       </div>
+      {admin_nav}
       <div class="container">
         <div class="stats">
           <div class="stat-card">
@@ -232,6 +436,40 @@ async def dashboard():
     </body>
   </html>
   """
+
+
+class LoginRequest(BaseModel):
+  credential: str
+
+
+@app.post("/admin/login")
+async def admin_login(body: LoginRequest):
+  """Verify a Google Identity Services ID token and issue a session cookie."""
+  client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+  try:
+    email = auth.verify_google_id_token(body.credential, client_id=client_id)
+  except Exception as e:
+    raise HTTPException(status_code=401, detail=str(e))
+
+  cookie_value = auth.create_session_cookie(email)
+  response = JSONResponse({"status": "ok", "email": email})
+  response.set_cookie(
+      key=auth.SESSION_COOKIE_NAME,
+      value=cookie_value,
+      httponly=True,
+      secure=True,
+      samesite="strict",
+      max_age=auth.SESSION_TTL_SECONDS,
+  )
+  return response
+
+
+@app.post("/admin/logout")
+async def admin_logout():
+  """Clear the admin session cookie."""
+  response = JSONResponse({"status": "ok"})
+  response.delete_cookie(auth.SESSION_COOKIE_NAME)
+  return response
 
 
 @app.get("/reports/{date}", response_class=HTMLResponse)
@@ -270,21 +508,36 @@ async def report_detail(date: str):
       stat_approved_class = ""
       stat_failed_class = ""
     else:
-      failed_questions = [r for r in audit_results if not r.get("approved", False)]
-      fail_cards = "".join(
+      def render_sources(sources_checked):
+        if not sources_checked:
+          return ""
+        items = "".join(
+            f'<li>{s["url"]}{"" if s.get("verified") else " — ⚠ unverified"}</li>'
+            for s in sources_checked
+        )
+        return (
+            '<div style="margin-top: 6px; font-size: 12px; color: var(--muted);">'
+            f'<strong>Sources checked:</strong><ul style="margin: 4px 0 0 18px;">{items}</ul></div>'
+        )
+
+      question_cards = "".join(
           f"""
-          <div class="fail-card">
-            <div class="q">{r.get('question', 'N/A')}</div>
-            <div class="why">{r.get('review') or 'Failed'}</div>
+          <div class="fail-card" style="background: var(--card); box-shadow: 0 4px 0 {'var(--good-shadow)' if r.get('approved') else 'var(--bad-shadow)'};">
+            <div class="q">{r.get('question', 'N/A')} {'✓' if r.get('approved') else '✗'}</div>
+            <div class="why">{r.get('review') or ('Approved' if r.get('approved') else 'Failed')}</div>
+            <div style="margin-top: 8px; font-size: 13px;">
+              <strong>Choices:</strong> {', '.join(r.get('choices', []))}
+              &nbsp;·&nbsp;
+              <strong>Answer matches a choice:</strong> {'✓' if r.get('answer_matches_choice') else '✗'}
+            </div>
+            {render_sources(r.get('sources_checked', []))}
           </div>
           """
-          for r in failed_questions
+          for r in audit_results
       )
       failed_section = (
-          f'<h2 style="margin-top: 32px; margin-bottom: 4px;">Failed Questions</h2>'
-          f'<div class="card-list">{fail_cards}</div>'
-          if fail_cards
-          else '<div class="empty">All questions passed — nothing to review.</div>'
+          f'<h2 style="margin-top: 32px; margin-bottom: 4px;">Questions</h2>'
+          f'<div class="card-list">{question_cards}</div>'
       )
       stat_approved_class = "good"
       stat_failed_class = "bad"
@@ -353,9 +606,9 @@ async def trigger_audit(request: Request):
   # resolved (real questions saved, or the retry budget is exhausted and
   # the alert sent), skip re-running the pipeline for the rest of the day.
   quiz_date_today = datetime.now().strftime("%Y-%m-%d")
+  db = get_db()
   try:
-    check_db = get_db()
-    existing_doc = check_db.collection("audits").document(quiz_date_today).get()
+    existing_doc = db.collection("audits").document(quiz_date_today).get()
     if existing_doc.exists:
       existing_status = (existing_doc.to_dict() or {}).get("status")
       if existing_status in ("complete", "empty_final"):
@@ -371,12 +624,13 @@ async def trigger_audit(request: Request):
     print(f"Warning: could not check existing audit status before trigger: {e}")
 
   try:
+    instruction = get_auditor_instruction(db)
     session_service = InMemorySessionService()
     session = await session_service.create_session(
         app_name="quizzy_auditor", user_id="scheduler"
     )
     runner = Runner(
-        agent=root_agent,
+        agent=build_daily_pipeline(instruction),
         app_name="quizzy_auditor",
         session_service=session_service,
     )

@@ -1,3 +1,4 @@
+import json
 from typing import AsyncGenerator
 
 import httpx
@@ -12,6 +13,19 @@ from typing_extensions import override
 QUIZ_ENDPOINT = "https://getdailygemini-mgpsab4ctq-uc.a.run.app"
 
 
+async def fetch_quiz() -> dict:
+  """Fetch and parse today's quiz from quizzy-news-service.
+
+  Returns the `data` object: {"quizDate": str, "quiz": [...]}. Shared by
+  FetcherAgent and the admin dry-run endpoint's "today" target so both use
+  the exact same fetch/parse logic.
+  """
+  async with httpx.AsyncClient(timeout=30.0) as client:
+    response = await client.get(QUIZ_ENDPOINT)
+    response.raise_for_status()
+  return response.json()["data"]
+
+
 class FetcherAgent(BaseAgent):
   """Tool-only agent (no LLM call): fetches the day's quiz from
   quizzy-news-service and hands it to the next agent in the pipeline
@@ -22,10 +36,8 @@ class FetcherAgent(BaseAgent):
   async def _run_async_impl(
       self, ctx: InvocationContext
   ) -> AsyncGenerator[Event, None]:
-    async with httpx.AsyncClient(timeout=30.0) as client:
-      response = await client.get(QUIZ_ENDPOINT)
-      response.raise_for_status()
-    quiz_json = response.text
+    data = await fetch_quiz()
+    quiz_json = json.dumps({"data": data})
 
     yield Event(
         invocation_id=ctx.invocation_id,
