@@ -11,14 +11,16 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from google.auth.transport import requests
 from google.cloud import firestore
 from google.oauth2 import id_token
 from google.genai import types
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+from pydantic import BaseModel
 
+import auth
 from daily_audit_pipeline.agent import DEFAULT_AUDITOR_INSTRUCTION, build_daily_pipeline
 
 app = FastAPI(
@@ -243,6 +245,40 @@ async def dashboard():
     </body>
   </html>
   """
+
+
+class LoginRequest(BaseModel):
+  credential: str
+
+
+@app.post("/admin/login")
+async def admin_login(body: LoginRequest):
+  """Verify a Google Identity Services ID token and issue a session cookie."""
+  client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+  try:
+    email = auth.verify_google_id_token(body.credential, client_id=client_id)
+  except Exception as e:
+    raise HTTPException(status_code=401, detail=str(e))
+
+  cookie_value = auth.create_session_cookie(email)
+  response = JSONResponse({"status": "ok", "email": email})
+  response.set_cookie(
+      key=auth.SESSION_COOKIE_NAME,
+      value=cookie_value,
+      httponly=True,
+      secure=True,
+      samesite="strict",
+      max_age=auth.SESSION_TTL_SECONDS,
+  )
+  return response
+
+
+@app.post("/admin/logout")
+async def admin_logout():
+  """Clear the admin session cookie."""
+  response = JSONResponse({"status": "ok"})
+  response.delete_cookie(auth.SESSION_COOKIE_NAME)
+  return response
 
 
 @app.get("/reports/{date}", response_class=HTMLResponse)

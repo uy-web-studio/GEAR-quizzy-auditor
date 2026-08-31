@@ -206,3 +206,23 @@ def test_trigger_audit_uses_saved_rule_instruction(client):
 
           assert response.status_code == 200
           mock_build_pipeline.assert_called_once_with("CUSTOM RUBRIC TEXT")
+
+
+def test_admin_login_valid_token_sets_cookie(client, monkeypatch):
+  monkeypatch.setenv("SESSION_SECRET", "test-secret")
+  with patch("main.auth.verify_google_id_token", return_value="donovanuy@gmail.com"):
+    response = client.post("/admin/login", json={"credential": "fake-id-token"})
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "email": "donovanuy@gmail.com"}
+    assert "admin_session" in response.cookies
+
+
+def test_admin_login_invalid_token_returns_401(client):
+  with patch("main.auth.verify_google_id_token", side_effect=ValueError("bad token")):
+    response = client.post("/admin/login", json={"credential": "bad-token"})
+    assert response.status_code == 401
+
+
+def test_admin_logout_clears_cookie(client):
+  response = client.post("/admin/logout")
+  assert response.status_code == 200
