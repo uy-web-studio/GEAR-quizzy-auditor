@@ -91,3 +91,12 @@ def build_daily_pipeline(instruction: str = DEFAULT_AUDITOR_INSTRUCTION) -> Sequ
           ),
       ],
   )
+
+
+# `adk run`/`adk web` discover a runnable agent by looking for a
+# module-level `root_agent` — they have no Firestore/request context to
+# fetch an operator-edited rubric from, so this is always the built-in
+# default instruction. The real Cloud Run service never imports this name;
+# it calls build_daily_pipeline(instruction) directly with whatever's
+# currently saved (main.py's get_auditor_instruction()).
+root_agent = build_daily_pipeline()
