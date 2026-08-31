@@ -6,6 +6,7 @@ This FastAPI application serves as the Cloud Run service that:
 3. Provides dashboard endpoints for viewing audit history
 """
 
+import json
 import os
 from datetime import datetime, timedelta
 from typing import Optional
@@ -21,8 +22,11 @@ from google.adk.sessions import InMemorySessionService
 from pydantic import BaseModel
 
 import auth
-from daily_audit_pipeline.agent import DEFAULT_AUDITOR_INSTRUCTION, build_daily_pipeline
+from daily_audit_pipeline.agent import DEFAULT_AUDITOR_INSTRUCTION, build_auditor_agent, build_daily_pipeline
+from daily_audit_pipeline.fetcher import fetch_quiz
+from daily_audit_pipeline.grounding import cross_validate_sources, extract_grounding_activity
 from daily_audit_pipeline.revisions import log_revision
+from daily_audit_pipeline.schemas import QuestionAudit
 
 app = FastAPI(
     title="Quizzy Auditor",
@@ -119,6 +123,63 @@ def get_auditor_instruction(db) -> str:
   return DEFAULT_AUDITOR_INSTRUCTION
 
 
+async def run_dry_run(instruction: str, target: str) -> dict:
+  """Run the auditor step only (no Fetcher, no Reporter) against either a
+  fresh live fetch ("today") or — in Phase 2 — a stored quizzes/{date} doc.
+  No Firestore write to audits/{date}, no email. See spec §5."""
+  try:
+    if target == "today":
+      quiz_data = await fetch_quiz()
+    else:
+      return {"error": f"Historical dry-run targets aren't available yet (target={target})"}
+
+    quiz_json = json.dumps({"data": quiz_data})
+
+    session_service = InMemorySessionService()
+    session = await session_service.create_session(app_name="dry_run", user_id="admin")
+    runner = Runner(
+        agent=build_auditor_agent(instruction),
+        app_name="dry_run",
+        session_service=session_service,
+    )
+    events = []
+    async for event in runner.run_async(
+        user_id="admin",
+        session_id=session.id,
+        new_message=types.Content(role="user", parts=[types.Part.from_text(text=quiz_json)]),
+    ):
+      events.append(event)
+
+    final_session = await session_service.get_session(
+        app_name="dry_run", user_id="admin", session_id=session.id
+    )
+    audit_results_raw = (final_session.state or {}).get("audit_results", [])
+    audit_results = [QuestionAudit(**r) if isinstance(r, dict) else r for r in audit_results_raw]
+
+    grounding_activity = extract_grounding_activity(events)
+    questions = [
+        {
+            "question": q.question,
+            "choices": q.choices,
+            "answer_matches_choice": q.answer_matches_choice,
+            "approved": q.approved,
+            "review": q.review,
+            "sources_checked": cross_validate_sources(q.sources_checked, grounding_activity),
+        }
+        for q in audit_results
+    ]
+    approved_count = sum(1 for q in questions if q["approved"])
+
+    return {
+        "questions": questions,
+        "total": len(questions),
+        "approved": approved_count,
+        "groundingActivity": grounding_activity,
+    }
+  except Exception as e:
+    return {"error": str(e)}
+
+
 def _render_admin_page(instruction: str, dry_run_result: Optional[dict], saved: bool) -> str:
   saved_banner = (
       '<div class="empty" style="color: var(--good-shadow); background: var(--good-tint); border-radius: 10px; padding: 12px;">Rules saved.</div>'
@@ -195,10 +256,14 @@ async def admin_rules_action(
     target: str = Form("today"),
     admin_email: str = Depends(auth.require_admin),
 ):
-  """Save an edited rubric instruction (action=save)."""
+  """Save an edited rubric (action=save), or preview it without saving
+  (action=dry_run)."""
   db = get_db()
 
-  # action == "dry_run" is handled in Task 10; "save" is this task's scope.
+  if action == "dry_run":
+    dry_run_result = await run_dry_run(instruction, target)
+    return _render_admin_page(instruction=instruction, dry_run_result=dry_run_result, saved=False)
+
   before = get_auditor_instruction(db)
   db.collection("config").document("auditor_rules").set({
       "instruction": instruction,

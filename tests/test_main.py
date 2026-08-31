@@ -294,3 +294,63 @@ def test_admin_save_rules_writes_and_logs_revision(client, monkeypatch):
       call_kwargs = mock_log_revision.call_args.kwargs
       assert call_kwargs["revision_type"] == "rule_change"
       assert call_kwargs["actor"] == "donovanuy@gmail.com"
+
+
+def test_admin_dry_run_today_returns_results_without_saving(client, monkeypatch):
+  monkeypatch.setenv("SESSION_SECRET", "test-secret")
+  mock_db = MagicMock()
+
+  with patch("main.get_db", return_value=mock_db):
+    with patch("main.fetch_quiz", new_callable=AsyncMock) as mock_fetch:
+      mock_fetch.return_value = {
+          "quizDate": "2026-08-30",
+          "quiz": [{"question": "Q1?", "choices": ["A", "B", "C"], "answer": "A", "source": {"url": "https://example.com"}}],
+      }
+      with patch("main.InMemorySessionService") as mock_session_service_cls:
+        mock_session_service = MagicMock()
+
+        async def fake_create_session(**kwargs):
+          return MagicMock(id="dry-run-session-1")
+
+        mock_session_service.create_session = fake_create_session
+
+        async def fake_get_session(**kwargs):
+          session = MagicMock()
+          session.state = {
+              "audit_results": [
+                  {
+                      "question": "Q1?",
+                      "choices": ["A", "B", "C"],
+                      "answer_matches_choice": True,
+                      "approved": True,
+                      "review": "Looks good.",
+                      "sources_checked": [],
+                  }
+              ]
+          }
+          return session
+
+        mock_session_service.get_session = fake_get_session
+        mock_session_service_cls.return_value = mock_session_service
+
+        with patch("main.Runner") as mock_runner_cls:
+          mock_runner = MagicMock()
+
+          async def fake_run_async(**kwargs):
+            if False:
+              yield None
+
+          mock_runner.run_async = fake_run_async
+          mock_runner_cls.return_value = mock_runner
+
+          response = client.post(
+              "/admin/rules",
+              data={"instruction": "DRAFT INSTRUCTION", "action": "dry_run", "target": "today"},
+              headers=_admin_cookie_header(),
+          )
+
+          assert response.status_code == 200
+          assert "1/1 approved" in response.text
+          # Dry run never writes to audits/{date}
+          for call in mock_db.collection.call_args_list:
+            assert call.args[0] != "audits"
