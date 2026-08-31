@@ -7,7 +7,10 @@ from .schemas import QuestionAudit
 
 # Rubric ported from the pre-existing `news-quiz-qc` skill, per SPEC.md §5 —
 # disclosed as prior written work being incorporated, not new hackathon code.
-AUDITOR_INSTRUCTION = """\
+# This is the seed default for Firestore's config/auditor_rules doc — the
+# operator can edit the live rubric from the admin dashboard without a
+# redeploy; see docs/superpowers/specs/2026-08-30-admin-dashboard-design.md.
+DEFAULT_AUDITOR_INSTRUCTION = """\
 You are auditing today's news quiz for editorial quality before it ships.
 
 The previous message in this conversation contains the raw quiz JSON,
@@ -49,31 +52,42 @@ Output one entry per question in the quiz, in the same order.
 """
 
 
-auditor_agent = LlmAgent(
-    name="auditor_agent",
-    model="gemini-3.7-flash",
-    description="Audits each quiz question against the editorial rubric.",
-    instruction=AUDITOR_INSTRUCTION,
-    tools=[google_search],
-    output_schema=list[QuestionAudit],
-    output_key="audit_results",
-)
+def build_auditor_agent(instruction: str = DEFAULT_AUDITOR_INSTRUCTION) -> LlmAgent:
+  """Build the auditor LlmAgent with a given rubric instruction.
 
-root_agent = SequentialAgent(
-    name="daily_audit_pipeline",
-    description=(
-        "Fetches the day's news quiz, audits it against the editorial rubric,"
-        " and reports results to Firestore with optional SendGrid notification."
-    ),
-    sub_agents=[
-        FetcherAgent(
-            name="fetcher_agent",
-            description="Fetches today's quiz from quizzy-news-service.",
-        ),
-        auditor_agent,
-        ReporterAgent(
-            name="reporter_agent",
-            description="Saves audit report to Firestore and sends email notification.",
-        ),
-    ],
-)
+  A factory rather than a module-level singleton so the admin dashboard's
+  rule editor and dry-run endpoint can construct an auditor with an
+  operator-edited or draft instruction, while the real daily pipeline uses
+  whatever's currently saved in Firestore's config/auditor_rules doc.
+  """
+  return LlmAgent(
+      name="auditor_agent",
+      model="gemini-3.7-flash",
+      description="Audits each quiz question against the editorial rubric.",
+      instruction=instruction,
+      tools=[google_search],
+      output_schema=list[QuestionAudit],
+      output_key="audit_results",
+  )
+
+
+def build_daily_pipeline(instruction: str = DEFAULT_AUDITOR_INSTRUCTION) -> SequentialAgent:
+  """Build the full fetch -> audit -> report pipeline with a given rubric."""
+  return SequentialAgent(
+      name="daily_audit_pipeline",
+      description=(
+          "Fetches the day's news quiz, audits it against the editorial rubric,"
+          " and reports results to Firestore with optional SendGrid notification."
+      ),
+      sub_agents=[
+          FetcherAgent(
+              name="fetcher_agent",
+              description="Fetches today's quiz from quizzy-news-service.",
+          ),
+          build_auditor_agent(instruction),
+          ReporterAgent(
+              name="reporter_agent",
+              description="Saves audit report to Firestore and sends email notification.",
+          ),
+      ],
+  )

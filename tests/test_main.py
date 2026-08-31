@@ -165,3 +165,44 @@ def test_trigger_audit_skips_when_already_complete(client):
         assert response.status_code == 200
         assert response.json()["status"] == "skipped"
         mock_runner_cls.assert_not_called()
+
+
+def test_trigger_audit_uses_saved_rule_instruction(client):
+  """POST /trigger-audit builds the pipeline with the saved config/auditor_rules
+  instruction, not the hardcoded default, when one has been saved."""
+  mock_audit_doc = MagicMock()
+  mock_audit_doc.exists = False  # no audits/{today} doc yet -> not skipped
+
+  mock_rules_doc = MagicMock()
+  mock_rules_doc.exists = True
+  mock_rules_doc.to_dict.return_value = {"instruction": "CUSTOM RUBRIC TEXT"}
+
+  mock_db = MagicMock()
+
+  def collection_side_effect(name):
+    coll = MagicMock()
+    if name == "audits":
+      coll.document.return_value.get.return_value = mock_audit_doc
+    elif name == "config":
+      coll.document.return_value.get.return_value = mock_rules_doc
+    return coll
+
+  mock_db.collection.side_effect = collection_side_effect
+
+  with patch.dict("os.environ", {"SKIP_AUTH": "true"}):
+    with patch("main.get_db", return_value=mock_db):
+      with patch("main.build_daily_pipeline") as mock_build_pipeline:
+        with patch("main.Runner") as mock_runner_cls:
+          mock_runner = MagicMock()
+
+          async def fake_run_async(**kwargs):
+            if False:
+              yield None
+
+          mock_runner.run_async = fake_run_async
+          mock_runner_cls.return_value = mock_runner
+
+          response = client.post("/trigger-audit")
+
+          assert response.status_code == 200
+          mock_build_pipeline.assert_called_once_with("CUSTOM RUBRIC TEXT")

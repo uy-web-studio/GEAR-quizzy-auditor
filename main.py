@@ -19,7 +19,7 @@ from google.genai import types
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 
-from daily_audit_pipeline.agent import root_agent
+from daily_audit_pipeline.agent import DEFAULT_AUDITOR_INSTRUCTION, build_daily_pipeline
 
 app = FastAPI(
     title="Quizzy Auditor",
@@ -103,6 +103,17 @@ def get_db():
   """Lazy initialization of Firestore client."""
   project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
   return firestore.Client(project=project_id) if project_id else firestore.Client()
+
+
+def get_auditor_instruction(db) -> str:
+  """Read the currently saved auditor rubric, falling back to the default."""
+  doc = db.collection("config").document("auditor_rules").get()
+  if doc.exists:
+    data = doc.to_dict() or {}
+    instruction = data.get("instruction")
+    if instruction:
+      return instruction
+  return DEFAULT_AUDITOR_INSTRUCTION
 
 
 def verify_cloud_scheduler_request(request: Request) -> bool:
@@ -353,9 +364,9 @@ async def trigger_audit(request: Request):
   # resolved (real questions saved, or the retry budget is exhausted and
   # the alert sent), skip re-running the pipeline for the rest of the day.
   quiz_date_today = datetime.now().strftime("%Y-%m-%d")
+  db = get_db()
   try:
-    check_db = get_db()
-    existing_doc = check_db.collection("audits").document(quiz_date_today).get()
+    existing_doc = db.collection("audits").document(quiz_date_today).get()
     if existing_doc.exists:
       existing_status = (existing_doc.to_dict() or {}).get("status")
       if existing_status in ("complete", "empty_final"):
@@ -371,12 +382,13 @@ async def trigger_audit(request: Request):
     print(f"Warning: could not check existing audit status before trigger: {e}")
 
   try:
+    instruction = get_auditor_instruction(db)
     session_service = InMemorySessionService()
     session = await session_service.create_session(
         app_name="quizzy_auditor", user_id="scheduler"
     )
     runner = Runner(
-        agent=root_agent,
+        agent=build_daily_pipeline(instruction),
         app_name="quizzy_auditor",
         session_service=session_service,
     )
