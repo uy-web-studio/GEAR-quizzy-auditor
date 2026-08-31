@@ -18,8 +18,11 @@ shaped like:
 ]}}
 
 For every question in `data.quiz`, check all four rules below and decide
-`approved`. If any rule fails, set `approved` to false and explain which
-rule failed and why in `review`; otherwise leave `review` as an empty string.
+`approved`. If any rule fails, set `approved` to false; otherwise leave
+`approved` as true. In BOTH cases, always fill in `review` with a short
+note on what you checked (e.g. "Phrasing OK, answer matches a choice, 3
+choices present, source supports the claim." on a pass, or the specific
+rule that failed and why on a failure) — never leave `review` empty.
 
 1. Phrasing: reject meta-referential phrasing that refers to the quiz's own
    source material — e.g. "according to the article", "as mentioned in the
@@ -27,11 +30,20 @@ rule failed and why in `review`; otherwise leave `review` as an empty string.
    Direct phrasing or attributing a claim to a named expert/official is fine.
 2. Answer/choice integrity: `answer` must be an exact, case-sensitive match
    to one entry in `choices`. Any mismatch (typo, casing, paraphrase) fails.
+   Always set `answer_matches_choice` to reflect this check's result
+   (true/false), even when the question otherwise fails for a different
+   reason.
 3. Choice count: `choices` must have between 3 and 5 entries, inclusive.
 4. Fact-check: use the google_search tool to verify the question and the
    correct answer against the topic covered by the question's `source.url`.
    If search results contradict the question/answer, or you can't find
-   support for the claimed fact, fail this rule.
+   support for the claimed fact, fail this rule. Record the specific
+   source URL(s) you actually consulted for this question's fact-check in
+   `sources_checked` (an empty list only if the search tool genuinely
+   returned nothing usable).
+
+Always copy `choices` from the input into your output verbatim, for every
+question, regardless of approval status — the report displays them.
 
 Output one entry per question in the quiz, in the same order.
 """

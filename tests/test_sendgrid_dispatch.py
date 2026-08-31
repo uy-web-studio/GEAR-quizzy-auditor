@@ -497,8 +497,8 @@ class TestReporterAgentIntegration:
     mock_session = MagicMock()
     mock_session.state = {
         "audit_results": [
-            {"question": "Q1: Valid?", "approved": True, "review": ""},
-            {"question": "Q2: Broken?", "approved": False, "review": "Rule 1 violated"},
+            {"question": "Q1: Valid?", "choices": ["A", "B", "C"], "answer_matches_choice": True, "approved": True, "review": "Looks good."},
+            {"question": "Q2: Broken?", "choices": ["X", "Y", "Z"], "answer_matches_choice": False, "approved": False, "review": "Rule 1 violated"},
         ]
     }
     
@@ -546,8 +546,8 @@ class TestReporterAgentIntegration:
     mock_session = MagicMock()
     mock_session.state = {
         "audit_results": [
-            {"question": "Q1", "approved": True, "review": ""},
-            {"question": "Q2", "approved": True, "review": ""},
+            {"question": "Q1", "choices": ["A", "B", "C"], "answer_matches_choice": True, "approved": True, "review": "Looks good."},
+            {"question": "Q2", "choices": ["A", "B", "C"], "answer_matches_choice": True, "approved": True, "review": "Looks good."},
         ]
     }
     mock_ctx = MagicMock()

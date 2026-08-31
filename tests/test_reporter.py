@@ -20,8 +20,8 @@ class TestReporterAgent:
     session = MagicMock(spec=Session)
     session.state = {
         "audit_results": [
-            {"question": "Q1", "approved": True, "review": ""},
-            {"question": "Q2", "approved": True, "review": ""},
+            {"question": "Q1", "choices": ["A", "B", "C"], "answer_matches_choice": True, "approved": True, "review": "Looks good."},
+            {"question": "Q2", "choices": ["A", "B", "C"], "answer_matches_choice": True, "approved": True, "review": "Looks good."},
         ]
     }
     
@@ -58,8 +58,8 @@ class TestReporterAgent:
     session = MagicMock(spec=Session)
     session.state = {
         "audit_results": [
-            QuestionAudit(question="Q1", approved=True, review=""),
-            QuestionAudit(question="Q2", approved=False, review="Rule 1 failure"),
+            QuestionAudit(question="Q1", choices=["A", "B", "C"], answer_matches_choice=True, approved=True, review="Looks good."),
+            QuestionAudit(question="Q2", choices=["X", "Y", "Z"], answer_matches_choice=False, approved=False, review="Rule 1 failure"),
         ]
     }
     
