@@ -73,6 +73,7 @@ gcloud run deploy "${SERVICE_NAME}" \
     --cpu=2 \
     --timeout=3600 \
     --set-env-vars="GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=global,GOOGLE_GENAI_USE_ENTERPRISE=1" \
+    --set-secrets="SESSION_SECRET=session-secret:latest" \
     --service-account="${COMPUTE_SA}"
 
 # Get the service URL
@@ -123,13 +124,20 @@ echo "   only does real work on a no-quiz day — up to 4 checks before it"
 echo "   alerts and stops retrying.)"
 echo ""
 
-# Step 6: Verify Secret Manager has the SendGrid API key
-echo "6️⃣  Checking Secret Manager for SendGrid API key..."
+# Step 6: Verify Secret Manager has the SendGrid API key and admin session secret
+echo "6️⃣  Checking Secret Manager for required secrets..."
 if ! gcloud secrets describe sendgrid-api-key &>/dev/null; then
     echo "   ⚠️  SendGrid API key not found in Secret Manager — see DEPLOYMENT.md"
     echo "   §4 (Set Up SendGrid Secret) before relying on email alerts."
 else
     echo "   ✅ SendGrid API key found in Secret Manager"
+fi
+if ! gcloud secrets describe session-secret &>/dev/null; then
+    echo "   ⚠️  session-secret not found in Secret Manager — admin routes will"
+    echo "   500 until one exists. Create with:"
+    echo "     openssl rand -hex 32 | gcloud secrets create session-secret --data-file=-"
+else
+    echo "   ✅ session-secret found in Secret Manager"
 fi
 
 echo ""
@@ -144,3 +152,9 @@ echo "1. Check the dashboard: ${SERVICE_URL}"
 echo "2. Test the trigger manually: curl -X POST '${SERVICE_URL}/trigger-audit' -H \"Authorization: Bearer \$(gcloud auth print-identity-token --audiences=${SERVICE_URL})\""
 echo "3. View logs: gcloud run logs read ${SERVICE_NAME} --region=${REGION} --limit=50"
 echo "4. Confirm the scheduler job: gcloud scheduler jobs describe ${SCHEDULER_JOB_NAME} --location=${REGION}"
+echo "5. Admin sign-in won't work until GOOGLE_OAUTH_CLIENT_ID is set — this"
+echo "   requires a one-time manual step in GCP Console (APIs & Services >"
+echo "   Credentials > Create Credentials > OAuth client ID > Web application;"
+echo "   authorized JS origin = ${SERVICE_URL}), then:"
+echo "     gcloud run services update ${SERVICE_NAME} --region=${REGION} \\"
+echo "       --update-env-vars=GOOGLE_OAUTH_CLIENT_ID=<client-id>.apps.googleusercontent.com"
