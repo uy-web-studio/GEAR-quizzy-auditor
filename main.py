@@ -10,7 +10,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from google.auth.transport import requests
 from google.cloud import firestore
@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 import auth
 from daily_audit_pipeline.agent import DEFAULT_AUDITOR_INSTRUCTION, build_daily_pipeline
+from daily_audit_pipeline.revisions import log_revision
 
 app = FastAPI(
     title="Quizzy Auditor",
@@ -116,6 +117,103 @@ def get_auditor_instruction(db) -> str:
     if instruction:
       return instruction
   return DEFAULT_AUDITOR_INSTRUCTION
+
+
+def _render_admin_page(instruction: str, dry_run_result: Optional[dict], saved: bool) -> str:
+  saved_banner = (
+      '<div class="empty" style="color: var(--good-shadow); background: var(--good-tint); border-radius: 10px; padding: 12px;">Rules saved.</div>'
+      if saved else ""
+  )
+
+  dry_run_html = ""
+  if dry_run_result is not None:
+    if dry_run_result.get("error"):
+      dry_run_html = f'<div class="empty" style="color: var(--bad-shadow); background: var(--bad-tint); border-radius: 10px; padding: 12px;">Dry run failed: {dry_run_result["error"]}</div>'
+    else:
+      cards = "".join(
+          f"""
+          <div class="fail-card" style="background: var(--card); box-shadow: 0 4px 0 {'var(--good-shadow)' if q['approved'] else 'var(--bad-shadow)'};">
+            <div class="q">{q['question']} — {'PASS' if q['approved'] else 'FAIL'}</div>
+            <div class="why">{q['review']}</div>
+          </div>
+          """
+          for q in dry_run_result["questions"]
+      )
+      dry_run_html = f"""
+      <h2 style="margin-top: 24px;">Dry Run Results ({dry_run_result['approved']}/{dry_run_result['total']} approved)</h2>
+      <div class="card-list">{cards}</div>
+      """
+
+  return f"""
+  <!DOCTYPE html>
+  <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Quizzy Auditor — Edit Rules</title>
+{FONT_LINKS}
+      <style>
+{SHARED_STYLES}
+        textarea {{ width: 100%; min-height: 320px; font-family: monospace; font-size: 13px; padding: 12px; border-radius: 10px; border: 1px solid var(--line); box-sizing: border-box; }}
+        .btn {{ display: inline-block; padding: 10px 20px; border-radius: 8px; border: none; background: var(--brand); color: white; font-weight: 700; font-size: 14px; cursor: pointer; box-shadow: 0 4px 0 var(--brand-shadow); }}
+      </style>
+    </head>
+    <body>
+      <div class="page-header container">
+        <a href="/" class="back-link">← All audits</a>
+        <h1>Edit Auditor Rules</h1>
+      </div>
+      <div class="container">
+        {saved_banner}
+        <form method="POST" action="/admin/rules">
+          <textarea name="instruction">{instruction}</textarea>
+          <div style="margin-top: 12px;">
+            <button class="btn" type="submit" name="action" value="save">Save</button>
+            <button class="btn" type="submit" name="action" value="dry_run" style="background: var(--good); box-shadow: 0 4px 0 var(--good-shadow);">Dry Run (today's live quiz)</button>
+          </div>
+          <input type="hidden" name="target" value="today">
+        </form>
+        {dry_run_html}
+      </div>
+    </body>
+  </html>
+  """
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_rules_page(admin_email: str = Depends(auth.require_admin)):
+  """Rule editor — auth-gated. Shows the current saved rubric in a textarea."""
+  db = get_db()
+  instruction = get_auditor_instruction(db)
+  return _render_admin_page(instruction=instruction, dry_run_result=None, saved=False)
+
+
+@app.post("/admin/rules", response_class=HTMLResponse)
+async def admin_rules_action(
+    instruction: str = Form(...),
+    action: str = Form(...),
+    target: str = Form("today"),
+    admin_email: str = Depends(auth.require_admin),
+):
+  """Save an edited rubric instruction (action=save)."""
+  db = get_db()
+
+  # action == "dry_run" is handled in Task 10; "save" is this task's scope.
+  before = get_auditor_instruction(db)
+  db.collection("config").document("auditor_rules").set({
+      "instruction": instruction,
+      "updatedAt": datetime.now().isoformat() + "Z",
+      "updatedBy": admin_email,
+  })
+  log_revision(
+      db,
+      revision_type="rule_change",
+      actor=admin_email,
+      target={"scope": "auditor_rules"},
+      before={"instruction": before},
+      after={"instruction": instruction},
+  )
+  return _render_admin_page(instruction=instruction, dry_run_result=None, saved=True)
 
 
 def verify_cloud_scheduler_request(request: Request) -> bool:

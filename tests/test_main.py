@@ -233,3 +233,64 @@ def test_admin_login_invalid_token_returns_401(client):
 def test_admin_logout_clears_cookie(client):
   response = client.post("/admin/logout")
   assert response.status_code == 200
+
+
+def _admin_cookie_header():
+  """A valid signed admin session cookie header for tests, using the same
+  SESSION_SECRET the test process sets via monkeypatch."""
+  import auth
+  cookie_value = auth.create_session_cookie("donovanuy@gmail.com", secret="test-secret")
+  return {"Cookie": f"{auth.SESSION_COOKIE_NAME}={cookie_value}"}
+
+
+def test_admin_rules_page_requires_auth(client, monkeypatch):
+  monkeypatch.setenv("SESSION_SECRET", "test-secret")
+  response = client.get("/admin")
+  assert response.status_code == 401
+
+
+def test_admin_rules_page_shows_current_instruction(client, monkeypatch):
+  monkeypatch.setenv("SESSION_SECRET", "test-secret")
+  mock_rules_doc = MagicMock()
+  mock_rules_doc.exists = True
+  mock_rules_doc.to_dict.return_value = {"instruction": "CURRENT RUBRIC TEXT"}
+  mock_db = MagicMock()
+  mock_db.collection.return_value.document.return_value.get.return_value = mock_rules_doc
+
+  with patch("main.get_db", return_value=mock_db):
+    response = client.get("/admin", headers=_admin_cookie_header())
+    assert response.status_code == 200
+    assert "CURRENT RUBRIC TEXT" in response.text
+
+
+def test_admin_save_rules_requires_auth(client, monkeypatch):
+  monkeypatch.setenv("SESSION_SECRET", "test-secret")
+  response = client.post("/admin/rules", data={"instruction": "x", "action": "save"})
+  assert response.status_code == 401
+
+
+def test_admin_save_rules_writes_and_logs_revision(client, monkeypatch):
+  monkeypatch.setenv("SESSION_SECRET", "test-secret")
+  mock_existing_doc = MagicMock()
+  mock_existing_doc.exists = False
+  mock_db = MagicMock()
+  mock_db.collection.return_value.document.return_value.get.return_value = mock_existing_doc
+
+  with patch("main.get_db", return_value=mock_db):
+    with patch("main.log_revision") as mock_log_revision:
+      response = client.post(
+          "/admin/rules",
+          data={"instruction": "NEW RUBRIC TEXT", "action": "save"},
+          headers=_admin_cookie_header(),
+      )
+      assert response.status_code == 200
+      assert "Rules saved" in response.text
+
+      set_call = mock_db.collection.return_value.document.return_value.set.call_args.args[0]
+      assert set_call["instruction"] == "NEW RUBRIC TEXT"
+      assert set_call["updatedBy"] == "donovanuy@gmail.com"
+
+      mock_log_revision.assert_called_once()
+      call_kwargs = mock_log_revision.call_args.kwargs
+      assert call_kwargs["revision_type"] == "rule_change"
+      assert call_kwargs["actor"] == "donovanuy@gmail.com"
