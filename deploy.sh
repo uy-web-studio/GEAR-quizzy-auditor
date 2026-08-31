@@ -84,6 +84,17 @@ echo "✅ Cloud Run deployment successful!"
 echo "   Service URL: ${SERVICE_URL}"
 echo ""
 
+# Step 4.5: Wire SERVICE_URL into the running service. main.py's Cloud
+# Scheduler auth check verifies the OIDC token's audience against
+# os.environ["SERVICE_URL"] — without this, the URL isn't knowable until
+# after the first deploy, so it was never injected and the audience check
+# was silently skipped (any valid Google-signed ID token could hit
+# /trigger-audit, not just the scheduler job's own service account).
+echo "4️⃣.5  Wiring SERVICE_URL into the running service for OIDC audience verification..."
+gcloud run services update "${SERVICE_NAME}" \
+    --region="${REGION}" \
+    --update-env-vars="SERVICE_URL=${SERVICE_URL}"
+
 # Step 5: Create/update Cloud Scheduler job
 echo "5️⃣  Setting up Cloud Scheduler..."
 

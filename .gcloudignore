@@ -1,14 +1,35 @@
-# Allow all source files through for Cloud Build
+# Explicit allowlist for Cloud Build's source upload.
 #
-# By default gcloudignore excludes many files.
-# We want the full source tree + Dockerfile for the container build.
-# Explicitly allow everything.
+# gcloudignore uses git-style negation: a "!" line only un-ignores
+# something that a broader pattern already excluded. Without this leading
+# catch-all, every "!" line below was a no-op and the *entire* working
+# tree — .git/ history, __pycache__/, any local .venv/, any .env with
+# secrets — was uploaded to Cloud Build verbatim.
+*
 
 # Allow the Dockerfile
 !Dockerfile
 
-# Allow Python source
+# Allow Python source. Verified against `gcloud meta list-files-for-upload`
+# (its matching isn't a byte-exact git-ignore reimplementation): a bare
+# "!dir/*.py" pattern is silently dropped because the parent dir is still
+# excluded by "*" above — but negating the directory itself ("!dir/")
+# un-ignores gcloud's ENTIRE subtree, not just traversal. So each source
+# dir is allowed wholesale, then its non-source junk is explicitly
+# re-excluded below (plain, non-"!" patterns win over an earlier "!" for
+# the same path).
 !*.py
+!daily_audit_pipeline/
+!tests/
+
+# Re-exclude what wholesale-allowing daily_audit_pipeline/ and tests/
+# above would otherwise pull in: a real local secrets file, ADK's local
+# session DB, and bytecode caches.
+daily_audit_pipeline/.env
+daily_audit_pipeline/.adk/
+daily_audit_pipeline/.gitignore
+daily_audit_pipeline/__pycache__/
+tests/__pycache__/
 
 # Allow configs
 !requirements.txt
@@ -16,4 +37,4 @@
 !deploy.sh
 
 # Allow test fixtures
-!tests/
+!tests/*.json
