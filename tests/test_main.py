@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.testclient import TestClient
 
+import auth
 from main import app
 
 
@@ -215,6 +216,12 @@ def test_admin_login_valid_token_sets_cookie(client, monkeypatch):
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "email": "donovanuy@gmail.com"}
     assert "admin_session" in response.cookies
+
+    set_cookie_header = response.headers.get("set-cookie")
+    assert "HttpOnly" in set_cookie_header
+    assert "Secure" in set_cookie_header
+    assert "SameSite=strict" in set_cookie_header
+    assert f"Max-Age={auth.SESSION_TTL_SECONDS}" in set_cookie_header
 
 
 def test_admin_login_invalid_token_returns_401(client):
